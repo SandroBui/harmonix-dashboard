@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
+import Providers from "./providers";
+import ConnectWallet from "./components/ConnectWallet";
+import NavLinks from "./components/NavLinks";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -27,7 +31,25 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <Providers>
+          <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+            <nav className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
+              <Link
+                href="/"
+                className="text-sm font-semibold text-neutral-900 dark:text-white"
+              >
+                Harmonix
+              </Link>
+              <NavLinks />
+              <div className="ml-auto">
+                <ConnectWallet />
+              </div>
+            </nav>
+          </header>
+          {children}
+        </Providers>
+      </body>
     </html>
   );
 }

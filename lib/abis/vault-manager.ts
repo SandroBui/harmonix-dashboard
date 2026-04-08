@@ -1,0 +1,66 @@
+export const VAULT_MANAGER_ABI = [
+  {
+    inputs: [],
+    name: 'PRICE_UPDATER_ROLE',
+    outputs: [{ internalType: 'bytes32', name: '', type: 'bytes32' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'DEFAULT_ADMIN_ROLE',
+    outputs: [{ internalType: 'bytes32', name: '', type: 'bytes32' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'updateNav',
+    outputs: [{ internalType: 'uint256', name: 'pps', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'computeNav',
+    outputs: [
+      {
+        components: [
+          { internalType: 'uint256', name: 'totalSupply', type: 'uint256' },
+          { internalType: 'uint256', name: 'navDenomination', type: 'uint256' },
+          { internalType: 'uint256', name: 'effNavDenomination', type: 'uint256' },
+          { internalType: 'uint256', name: 'globalRedeemShares', type: 'uint256' },
+          { internalType: 'uint256[]', name: 'assetTotalNavs', type: 'uint256[]' },
+          { internalType: 'uint256', name: 'ppsValue', type: 'uint256' },
+          { internalType: 'bool', name: 'isValidPps', type: 'bool' },
+        ],
+        internalType: 'struct INavAggregateModel.NavResult',
+        name: 'result',
+        type: 'tuple',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'pricePerShare',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'lastNavUpdated',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'adminFacet',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const

@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Harmonix Dashboard
 
-## Getting Started
+Internal admin dashboard for the Harmonix protocol on **HyperEVM** (chain 999). All write operations are submitted as **Safe multisig proposals** — no action is executed on-chain until the required number of Safe owners sign and execute the transaction.
 
-First, run the development server:
+## What it does
+
+| Feature | Role required | Description |
+|---|---|---|
+| NAV Management | Price Updater, Admin | Sync per-category NAV values, trigger PPS recomputation, manage NAV categories |
+| Withdrawals | Operator | Review, batch-fulfill, or cancel pending user withdrawal requests |
+| Strategies | Curator | Whitelist strategies, set caps, allocate/deallocate capital |
+| Safe Transactions | Any owner | View, sign, execute, or cancel pending multisig transactions across all role Safes |
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env   # fill in your values
+yarn install
+yarn dev               # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Docs
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- [Environment variables](docs/env-vars.md)
+- [Role & Safe wallet setup](docs/roles-and-safes.md)
+- [NAV management guide](docs/nav-management.md)
+- [Withdrawals guide](docs/withdrawals.md)
+- [Strategies guide](docs/strategies.md)
+- [Safe transactions guide](docs/safe-transactions.md)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tech stack
 
-## Learn More
+- **Next.js 16** (App Router, Turbopack)
+- **React 19** + **TypeScript**
+- **Tailwind CSS v4**
+- **wagmi v2** + **viem** — wallet connection & on-chain reads
+- **Safe Protocol Kit + API Kit** — multisig transaction lifecycle
+- **TanStack Query** — server-state caching
 
-To learn more about Next.js, take a look at the following resources:
+## Commands
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+yarn dev      # dev server (Turbopack)
+yarn build    # production build
+yarn start    # production server
+yarn lint     # ESLint
+```
