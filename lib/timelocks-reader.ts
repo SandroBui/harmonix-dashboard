@@ -199,12 +199,14 @@ export async function getTimelockPageData(): Promise<TimelockPageData> {
     publicClient.readContract({
       address: HA_VAULT_READER_ADDRESS,
       abi: HA_VAULT_READER_ABI,
-      functionName: 'getFundVaultPending',
+      functionName: 'getContractPending',
+      args: [fundVaultAddress],
     }) as Promise<readonly RawPendingOp[]>,
     publicClient.readContract({
       address: HA_VAULT_READER_ADDRESS,
       abi: HA_VAULT_READER_ABI,
-      functionName: 'getVaultManagerAdminPending',
+      functionName: 'getContractPending',
+      args: [vaultManagerAdminAddress],
     }) as Promise<readonly RawPendingOp[]>,
   ])
 

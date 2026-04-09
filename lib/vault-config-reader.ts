@@ -56,15 +56,6 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
   }) as `0x${string}`
 
   // ── Step 2: read all config values in parallel ────────────────────────────
-  type FeeConfigRaw = {
-    feeReceiver: `0x${string}`
-    managementFeeRate: bigint
-    lastManagementHarvest: bigint
-    performanceFeeRate: bigint
-    highWatermark: bigint
-    lastHarvestPerformanceFeeTime: bigint
-  }
-
   const [
     accessManager,
     shareToken,
@@ -110,7 +101,7 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
       address: HA_VAULT_READER_ADDRESS,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getFeeConfig',
-    }) as Promise<FeeConfigRaw>,
+    }) as Promise<readonly [`0x${string}`, bigint, bigint, bigint, bigint, bigint]>,
     publicClient.readContract({
       address: HA_VAULT_READER_ADDRESS,
       abi: HA_VAULT_READER_ABI,
@@ -153,7 +144,8 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
   const rawPending = await publicClient.readContract({
     address: HA_VAULT_READER_ADDRESS,
     abi: HA_VAULT_READER_ABI,
-    functionName: 'getVaultManagerAdminPending',
+    functionName: 'getContractPending',
+    args: [vaultManagerAdminAddress],
   }) as readonly RawPendingOp[]
 
   const pendingOps: PendingOperation[] = rawPending.map((op, i) => {
@@ -182,12 +174,12 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
     priceFeed: priceFeed.toLowerCase(),
     fundNav: fundNav.toLowerCase(),
     feeConfig: {
-      feeReceiver: feeConfigRaw.feeReceiver.toLowerCase(),
-      managementFeeRate: feeConfigRaw.managementFeeRate.toString(),
-      performanceFeeRate: feeConfigRaw.performanceFeeRate.toString(),
-      highWatermark: feeConfigRaw.highWatermark.toString(),
-      lastManagementHarvest: feeConfigRaw.lastManagementHarvest.toString(),
-      lastHarvestPerformanceFeeTime: feeConfigRaw.lastHarvestPerformanceFeeTime.toString(),
+      feeReceiver: feeConfigRaw[0].toLowerCase(),
+      managementFeeRate: feeConfigRaw[1].toString(),
+      performanceFeeRate: feeConfigRaw[3].toString(),
+      highWatermark: feeConfigRaw[4].toString(),
+      lastManagementHarvest: feeConfigRaw[2].toString(),
+      lastHarvestPerformanceFeeTime: feeConfigRaw[5].toString(),
     },
     deviationPps: deviationPps.toString(),
     maxNavStaleness: maxNavStaleness.toString(),

@@ -120,7 +120,7 @@ export default function StrategyClient({ data }: Props) {
   const canExecute = isTimelocked && isPending && isReady
 
   // ── Pending FundVault timelock operations ────────────────────────────────
-  const pendingOps = useFundVaultPending()
+  const pendingOps = useFundVaultPending(fundVaultAddress)
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 

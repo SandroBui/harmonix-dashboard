@@ -25,8 +25,10 @@ export function useTimelockStatus(
     },
   })
 
+  const raw = result.data as readonly [bigint, bigint, boolean, boolean] | undefined
+
   return {
-    data: result.data as TimelockStatusResult | undefined,
+    data: raw ? { duration: raw[0], executableAt: raw[1], isReady: raw[2], isPending: raw[3] } as TimelockStatusResult : undefined,
     isLoading: result.isLoading,
     refetch: result.refetch,
   }
@@ -41,11 +43,12 @@ export type PendingOp = {
   isReady: boolean
 }
 
-export function useFundVaultPending() {
+export function useFundVaultPending(fundVaultAddress: `0x${string}`) {
   const result = useReadContract({
     address: HA_VAULT_READER_ADDRESS,
     abi: HA_VAULT_READER_ABI,
-    functionName: 'getFundVaultPending',
+    functionName: 'getContractPending',
+    args: [fundVaultAddress],
     query: {
       refetchInterval: 10_000,
     },
