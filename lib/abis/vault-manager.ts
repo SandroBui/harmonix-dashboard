@@ -63,4 +63,11 @@ export const VAULT_MANAGER_ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  {
+    inputs: [{ internalType: 'address', name: 'haContract', type: 'address' }],
+    name: 'pauseStatus',
+    outputs: [{ internalType: 'bool', name: 'isPaused', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
 ] as const

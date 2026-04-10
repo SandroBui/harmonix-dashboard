@@ -2,7 +2,7 @@
 
 import type { DataDecoded, DecodedParam } from '@/lib/safe/types'
 import { ASSET_METADATA } from '@/lib/contracts'
-import { decodeSubmitInnerData } from '@/lib/safe/decoder'
+import { decodeSubmitInnerData, resolveSelector } from '@/lib/safe/decoder'
 
 type Props = {
   decoded: DataDecoded | null
@@ -84,6 +84,12 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
 }
 
 function formatParamValue(value: string, type: string, to: string, allParams: DecodedParam[]): string {
+  if (type === 'bytes4') {
+    const fnName = resolveSelector(value)
+    if (fnName !== value) return `${value} (${fnName})`
+    return value
+  }
+
   if (type === 'uint256') {
     // Primary lookup: `to` address is the token contract (e.g. ERC-20 transfer/approve)
     let meta = ASSET_METADATA[to.toLowerCase()]

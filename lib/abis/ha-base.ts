@@ -159,4 +159,26 @@ export const VAULT_MANAGER_ADMIN_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  // ── Emergency functions ───────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'setPauseStatus',
+    inputs: [
+      { name: 'haContract', type: 'address', internalType: 'address' },
+      { name: 'isPaused', type: 'bool', internalType: 'bool' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setFunctionDisabled',
+    inputs: [
+      { name: 'haContract', type: 'address', internalType: 'address' },
+      { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
+      { name: 'disabled', type: 'bool', internalType: 'bool' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
 ] as const

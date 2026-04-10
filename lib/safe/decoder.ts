@@ -1,9 +1,23 @@
-import { decodeFunctionData } from 'viem'
+import { decodeFunctionData, toFunctionSelector } from 'viem'
 import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
 import { ASSET_METADATA } from '@/lib/contracts'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { getApiKit } from './api-kit'
 import type { DataDecoded, DecodedParam } from './types'
+
+// Map known bytes4 selectors to human-readable function names (VaultAsset)
+const KNOWN_SELECTORS: Record<string, string> = {}
+for (const entry of VAULT_ASSET_ABI) {
+  if (entry.type === 'function' && 'name' in entry && 'inputs' in entry) {
+    const sig = `${entry.name}(${(entry.inputs as readonly { type: string }[]).map((i) => i.type).join(',')})`
+    KNOWN_SELECTORS[toFunctionSelector(sig)] = entry.name
+  }
+}
+
+/** Resolve a bytes4 selector to its function name, or return the raw hex if unknown. */
+export function resolveSelector(selector: string): string {
+  return KNOWN_SELECTORS[selector.toLowerCase()] ?? selector
+}
 
 // ---------------------------------------------------------------------------
 // Decoder
@@ -219,6 +233,23 @@ export function summarizeDecodedData(
     )
     const fnLabel = fnDef?.name ?? selector
     return `Set timelock for ${fnLabel} → ${formatDuration(Number(duration))}`
+  }
+
+  // ── Emergency methods ───────────────────────────────────────────────
+  if (method === 'setPauseStatus') {
+    const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
+    const isPaused = parameters.find((p) => p.name === 'isPaused')?.value
+    const action = isPaused === 'true' ? 'Pause' : 'Unpause'
+    return `${action} contract ${truncate(contract)}`
+  }
+
+  if (method === 'setFunctionDisabled') {
+    const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
+    const selector = parameters.find((p) => p.name === 'selector')?.value ?? ''
+    const disabled = parameters.find((p) => p.name === 'disabled')?.value
+    const fnName = KNOWN_SELECTORS[selector.toLowerCase()] ?? selector
+    const action = disabled === 'true' ? 'Disable' : 'Enable'
+    return `${action} ${fnName}() on ${truncate(contract)}`
   }
 
   // Generic fallback
