@@ -1,19 +1,12 @@
-import { createPublicClient, http } from 'viem'
 import {
-  HA_VAULT_READER_ADDRESS,
   HA_VAULT_READER_ABI,
-  FUND_NAV_FEED_ADDRESS,
   FUND_NAV_FEED_ABI,
   VAULT_MANAGER_ABI,
 } from './contracts'
 import { TIMELOCKED_FUNCTIONS } from './timelocks-reader'
 import type { PendingOperation } from './timelocks-reader'
-import { hyperEvmMainnet } from './wagmi-config'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { getPublicClient } from './client'
+import type { VaultGroupConfig } from './vault-group-config'
 
 export type FeeConfig = {
   feeReceiver: string
@@ -41,10 +34,19 @@ export type VaultConfigData = {
   fetchedAt: number
 }
 
-export async function getVaultConfigData(): Promise<VaultConfigData> {
-  // ── Step 1: resolve contract addresses ────────────────────────────────────
+export async function getVaultConfigData(config: VaultGroupConfig): Promise<VaultConfigData> {
+  const publicClient = getPublicClient()
+  const { haVaultReaderAddress } = config
+
+  // ── Step 1: get FundNavFeed from reader, then VaultManager from FundNavFeed ─
+  const fundNavFeedAddress = await publicClient.readContract({
+    address: haVaultReaderAddress,
+    abi: HA_VAULT_READER_ABI,
+    functionName: 'getFundNav',
+  }) as `0x${string}`
+
   const vaultManagerAddress = await publicClient.readContract({
-    address: FUND_NAV_FEED_ADDRESS,
+    address: fundNavFeedAddress,
     abi: FUND_NAV_FEED_ABI,
     functionName: 'vaultManager',
   }) as `0x${string}`
@@ -68,47 +70,47 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
     maxNavStaleness,
   ] = await Promise.all([
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getAccessManager',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getShareToken',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getFundVault',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getRequestManager',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getPriceFeed',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getFundNav',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getFeeConfig',
     }) as Promise<readonly [`0x${string}`, bigint, bigint, bigint, bigint, bigint]>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getDeviationPps',
     }) as Promise<bigint>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getMaxNavStaleness',
     }) as Promise<bigint>,
@@ -120,7 +122,7 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
   const durations = await Promise.all(
     adminFns.map((f) =>
       publicClient.readContract({
-        address: HA_VAULT_READER_ADDRESS,
+        address: haVaultReaderAddress,
         abi: HA_VAULT_READER_ABI,
         functionName: 'getTimelockDuration',
         args: [vaultManagerAdminAddress, f.selector as `0x${string}`],
@@ -142,7 +144,7 @@ export async function getVaultConfigData(): Promise<VaultConfigData> {
   }
 
   const rawPending = await publicClient.readContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'getContractPending',
     args: [vaultManagerAdminAddress],

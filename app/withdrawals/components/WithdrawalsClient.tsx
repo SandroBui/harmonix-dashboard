@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ASSET_METADATA } from '@/lib/contracts'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useRoleCheck } from '@/lib/safe/hooks'
 import type { SafeInfo } from '@/lib/safe/types'
 import FilterBar, { StatusFilter, AssetOption } from './FilterBar'
@@ -44,6 +44,7 @@ function formatTimestamp(ts: number): string {
 
 export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props) {
   const router = useRouter()
+  const { data: assetMetadata } = useAssetMetadata()
 
   // Fetch Safe info for the operator role
   const { safeInfo: operatorSafeInfo, safeAddress: operatorSafeAddress } = useRoleCheck('operator')
@@ -61,7 +62,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
     for (const assetAddr of Object.values(vaultAssetMap)) {
       if (seen.has(assetAddr)) continue
       seen.add(assetAddr)
-      const meta = ASSET_METADATA[assetAddr]
+      const meta = assetMetadata?.[assetAddr]
       options.push({ assetAddress: assetAddr, symbol: meta?.symbol ?? truncateAddress(assetAddr) })
     }
     return options
@@ -214,7 +215,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {filtered.map((w) => {
                 const assetAddr = vaultAssetMap[w.vault]
-                const meta = assetAddr ? ASSET_METADATA[assetAddr] : undefined
+                const meta = assetAddr ? assetMetadata?.[assetAddr] : undefined
                 const selectable = isSelectable(w)
                 const checked = selectedIds.has(w.id)
 

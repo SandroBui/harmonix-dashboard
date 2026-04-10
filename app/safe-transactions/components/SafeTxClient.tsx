@@ -3,6 +3,7 @@
 import { usePendingSafeTransactions, useSafeInfo } from '@/lib/safe/hooks'
 import { getSafeAddressForRole, ROLE_LABELS } from '@/lib/safe/roles'
 import type { RoleType } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
 import SafeTxList from './SafeTxList'
 
@@ -46,11 +47,12 @@ function useAllRoleTxs(vaultAssetMap: Record<string, string>): {
   hasError: boolean
   refetchAll: () => void
 } {
-  const addrOperator          = getSafeAddressForRole('operator')
-  const addrCurator           = getSafeAddressForRole('curator')
-  const addrPriceUpdater      = getSafeAddressForRole('price_updater')
-  const addrTimelockProposer  = getSafeAddressForRole('timelock_proposer')
-  const addrAdmin             = getSafeAddressForRole('admin')
+  const config = useVaultConfig()
+  const addrOperator          = getSafeAddressForRole(config, 'operator')
+  const addrCurator           = getSafeAddressForRole(config, 'curator')
+  const addrPriceUpdater      = getSafeAddressForRole(config, 'price_updater')
+  const addrTimelockProposer  = getSafeAddressForRole(config, 'timelock_proposer')
+  const addrAdmin             = getSafeAddressForRole(config, 'admin')
 
   const qOperator          = usePendingSafeTransactions(addrOperator,          vaultAssetMap)
   const qCurator           = usePendingSafeTransactions(addrCurator,           vaultAssetMap)

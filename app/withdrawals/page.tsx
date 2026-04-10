@@ -1,4 +1,5 @@
 import { getAllWithdrawals, getVaultAssetMap } from '@/lib/vault-reader'
+import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import WithdrawalsClient from './components/WithdrawalsClient'
 import RefreshButton from './components/RefreshButton'
 
@@ -8,12 +9,20 @@ export const metadata = {
   title: 'Withdrawals — Harmonix',
 }
 
-export default async function WithdrawalsPage() {
+export default async function WithdrawalsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vault?: string }>
+}) {
+  const config = resolveVaultFromParams(await searchParams)
   let withdrawals
   let vaultAssetMap: Record<string, string>
 
   try {
-    ;[withdrawals, vaultAssetMap] = await Promise.all([getAllWithdrawals(), getVaultAssetMap()])
+    ;[withdrawals, vaultAssetMap] = await Promise.all([
+      getAllWithdrawals(config),
+      getVaultAssetMap(config),
+    ])
   } catch {
     return (
       <main className="mx-auto max-w-7xl px-4 py-10">

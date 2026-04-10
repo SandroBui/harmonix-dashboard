@@ -5,9 +5,10 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { FUND_NAV_FEED_ABI } from '@/lib/abis'
-import { FUND_NAV_FEED_ADDRESS } from '@/lib/contracts'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
+import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
 
 type Props = {
   asset: string
@@ -20,23 +21,24 @@ type Props = {
 export default function AddCategoryForm({ asset, canPropose, isConnected, onClose }: Props) {
   const { chainId } = useAccount()
   const [description, setDescription] = useState('')
-  const feedAddress = getAddress(FUND_NAV_FEED_ADDRESS) as `0x${string}`
+  const config = useVaultConfig()
+  const feedAddress = useFundNavFeedAddress()
   const assetAddress = getAddress(asset) as `0x${string}`
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole('admin'))
+  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
 
   const isWrongChain = isConnected && chainId !== 999
-  const canSubmit = isConnected && !isWrongChain && canPropose && description.trim().length > 0 && !proposeTx.isPending
+  const canSubmit = isConnected && !isWrongChain && canPropose && description.trim().length > 0 && !proposeTx.isPending && Boolean(feedAddress)
 
   function handleProposeSafe() {
-    if (!description.trim()) return
+    if (!description.trim() || !feedAddress) return
     proposeTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_NAV_FEED_ABI,
       functionName: 'addNavCategory',
       args: [assetAddress, description.trim()],
     })
-    proposeTx.mutate({ to: feedAddress, data: calldata })
+    proposeTx.mutate({ to: getAddress(feedAddress) as `0x${string}`, data: calldata })
   }
 
   // ── Button state ──────────────────────────────────────────────────────────

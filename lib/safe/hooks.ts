@@ -5,18 +5,20 @@ import { useAccount, useReadContract } from 'wagmi'
 import { getAddress } from 'viem'
 import type { SafeMultisigTransactionResponse } from '@safe-global/types-kit'
 import { getApiKit } from './api-kit'
-import { getDefaultSafeAddress } from './roles'
+import { getDefaultSafeAddress, getSafeAddressForRole, ROLE_HASHES } from './roles'
 import type { RoleType } from './roles'
-import { getSafeAddressForRole, ROLE_HASHES } from './roles'
 import { initProtocolKit } from './protocol-kit'
 import { decodeTransactionData, summarizeDecodedData } from './decoder'
-import { HA_VAULT_READER_ADDRESS, HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { useVaultConfig } from '@/lib/vault-context'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import type { PendingSafeTx, SafeInfo } from './types'
 
 // ─── Fetch Safe Info ──────────────────────────────────────────────────────────
 
 export function useSafeInfo(safeAddress?: `0x${string}`) {
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
   return useQuery<SafeInfo>({
     queryKey: ['safe', 'info', addr],
     queryFn: async () => {
@@ -37,9 +39,11 @@ export function useSafeInfo(safeAddress?: `0x${string}`) {
 // ─── Fetch Pending Transactions ───────────────────────────────────────────────
 
 export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAssetMap?: Record<string, string>) {
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const { data: assetMetadata } = useAssetMetadata()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
   return useQuery<PendingSafeTx[]>({
-    queryKey: ['safe', 'pendingTxs', addr],
+    queryKey: ['safe', 'pendingTxs', addr, assetMetadata],
     queryFn: async () => {
       const apiKit = getApiKit()
       const response = await apiKit.getPendingTransactions(addr)
@@ -63,7 +67,7 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
             confirmationsCount,
             isExecutable: confirmationsCount >= tx.confirmationsRequired,
             dataDecoded,
-            summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap),
+            summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata ?? {}),
           } satisfies PendingSafeTx
         }),
       )
@@ -79,7 +83,8 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
 export function useConfirmSafeTransaction(safeAddress?: `0x${string}`) {
   const queryClient = useQueryClient()
   const { address, connector } = useAccount()
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
 
   return useMutation({
     mutationFn: async ({ safeTxHash }: { safeTxHash: string }) => {
@@ -111,7 +116,8 @@ export function useConfirmSafeTransaction(safeAddress?: `0x${string}`) {
 export function useExecuteSafeTransaction(safeAddress?: `0x${string}`) {
   const queryClient = useQueryClient()
   const { address, connector } = useAccount()
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
 
   return useMutation({
     mutationFn: async ({ safeTxHash }: { safeTxHash: string }) => {
@@ -141,7 +147,8 @@ export function useExecuteSafeTransaction(safeAddress?: `0x${string}`) {
 export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
   const queryClient = useQueryClient()
   const { address, connector } = useAccount()
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
 
   return useMutation({
     mutationFn: async ({
@@ -200,7 +207,8 @@ export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
 export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {
   const queryClient = useQueryClient()
   const { address, connector } = useAccount()
-  const addr = safeAddress ?? getDefaultSafeAddress()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
 
   return useMutation({
     mutationFn: async ({ nonce }: { nonce: number }) => {
@@ -241,14 +249,15 @@ export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {
  * Also checks if the connected wallet is an owner of that Safe.
  */
 export function useRoleCheck(role: RoleType) {
-  const safeAddress = getSafeAddressForRole(role)
+  const config = useVaultConfig()
+  const safeAddress = getSafeAddressForRole(config, role)
   const { address, isConnected } = useAccount()
   const { data: safeInfo } = useSafeInfo(safeAddress)
 
   const isConfigured = Boolean(safeAddress && safeAddress !== '0x')
 
   const { data: hasRole } = useReadContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: config.haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'hasRole',
     args: isConfigured

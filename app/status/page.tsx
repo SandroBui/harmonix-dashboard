@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { getFundStatus } from '@/lib/status-reader'
+import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import RefreshButton from '../withdrawals/components/RefreshButton'
 import StatusClient from './components/StatusClient'
 
@@ -10,11 +11,16 @@ export const metadata: Metadata = {
   description: 'Live on-chain status of the Harmonix fund architecture.',
 }
 
-export default async function StatusPage() {
+export default async function StatusPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vault?: string }>
+}) {
+  const config = resolveVaultFromParams(await searchParams)
   let data
 
   try {
-    data = await getFundStatus()
+    data = await getFundStatus(config)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return (

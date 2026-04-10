@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress, parseUnits, decodeFunctionData } from 'viem'
 import { FUND_VAULT_ABI, HA_BASE_ABI } from '@/lib/abis'
-import { ASSET_METADATA } from '@/lib/contracts'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { useTimelockStatus, useFundVaultPending } from '@/lib/hooks/use-timelock-status'
@@ -52,6 +52,7 @@ function formatDuration(seconds: number): string {
 
 export default function StrategyClient({ data }: Props) {
   const { isConnected, chainId } = useAccount()
+  const { data: assetMetadata } = useAssetMetadata()
 
   // Curator Safe — for direct proposals and execute
   const { safeAddress, canPropose, isSafeOwner, hasRole } = useRoleCheck('curator')
@@ -289,7 +290,7 @@ export default function StrategyClient({ data }: Props) {
                   >
                     <option value="">Select a strategy...</option>
                     {allStrategies.map((s) => {
-                      const meta = ASSET_METADATA[s.asset]
+                      const meta = assetMetadata?.[s.asset]
                       return (
                         <option key={s.address} value={s.address}>
                           {truncateAddress(s.address)} - {s.description || 'No description'} ({meta?.symbol ?? '?'})

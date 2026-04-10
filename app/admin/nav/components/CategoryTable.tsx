@@ -5,9 +5,10 @@ import { useState, Fragment } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { FUND_NAV_FEED_ABI } from '@/lib/abis'
-import { FUND_NAV_FEED_ADDRESS } from '@/lib/contracts'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
+import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
 import { formatTokenAmount } from '@/lib/format'
 import type { NavCategoryData } from '@/lib/nav-reader'
 import SyncNavForm from './SyncNavForm'
@@ -62,7 +63,8 @@ function CategoryRowActions({
   onSyncClick: () => void
 }) {
   const { chainId } = useAccount()
-  const feedAddress = getAddress(FUND_NAV_FEED_ADDRESS) as `0x${string}`
+  const config = useVaultConfig()
+  const feedAddress = useFundNavFeedAddress()
   const assetAddress = getAddress(asset) as `0x${string}`
   const isWrongChain = roles.isConnected && chainId !== 999
 
@@ -71,28 +73,30 @@ function CategoryRowActions({
   const canProposeAdmin =
     roles.isConnected && !isWrongChain && roles.isSafeOwner && roles.safeHasAdmin
 
-  const toggleTx = useProposeSafeTransaction(getSafeAddressForRole('admin'))
-  const removeTx = useProposeSafeTransaction(getSafeAddressForRole('admin'))
+  const toggleTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
+  const removeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
   const [confirmRemove, setConfirmRemove] = useState(false)
 
   function handleToggle() {
+    if (!feedAddress) return
     toggleTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_NAV_FEED_ABI,
       functionName: 'setCategoryStatus',
       args: [assetAddress, category.description, !category.isActive],
     })
-    toggleTx.mutate({ to: feedAddress, data: calldata })
+    toggleTx.mutate({ to: getAddress(feedAddress) as `0x${string}`, data: calldata })
   }
 
   function handleRemoveSafe() {
+    if (!feedAddress) return
     removeTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_NAV_FEED_ABI,
       functionName: 'removeNavCategory',
       args: [assetAddress, category.description],
     })
-    removeTx.mutate({ to: feedAddress, data: calldata })
+    removeTx.mutate({ to: getAddress(feedAddress) as `0x${string}`, data: calldata })
     setConfirmRemove(false)
   }
 

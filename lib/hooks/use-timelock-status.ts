@@ -1,7 +1,8 @@
 'use client'
 
 import { useReadContract } from 'wagmi'
-import { HA_VAULT_READER_ADDRESS, HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { useVaultConfig } from '@/lib/vault-context'
 
 type TimelockStatusResult = {
   duration: bigint
@@ -14,8 +15,9 @@ export function useTimelockStatus(
   target: `0x${string}` | undefined,
   calldata: `0x${string}` | undefined,
 ) {
+  const { haVaultReaderAddress } = useVaultConfig()
   const result = useReadContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'getTimelockStatus',
     args: target && calldata ? [target, calldata] : undefined,
@@ -44,8 +46,9 @@ export type PendingOp = {
 }
 
 export function useFundVaultPending(fundVaultAddress: `0x${string}`) {
+  const { haVaultReaderAddress } = useVaultConfig()
   const result = useReadContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'getContractPending',
     args: [fundVaultAddress],

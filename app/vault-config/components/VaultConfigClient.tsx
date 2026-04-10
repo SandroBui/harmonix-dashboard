@@ -10,6 +10,7 @@ import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import type { PendingOperation } from '@/lib/timelocks-reader'
 import { getVaultConfigData } from '@/lib/vault-config-reader'
+import { useVaultConfig } from '@/lib/vault-context'
 import type { VaultConfigData } from '@/lib/vault-config-reader'
 import { useCountdown } from '@/lib/hooks/use-countdown'
 
@@ -547,10 +548,11 @@ export default function VaultConfigClient() {
   const timelockProposerCheck = useRoleCheck('timelock_proposer')
   const { isConnected, chainId } = useAccount()
   const isWrongChain = isConnected && chainId !== 999
+  const vaultConfig = useVaultConfig()
 
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['vault-config'],
-    queryFn: getVaultConfigData,
+    queryKey: ['vault-config', vaultConfig.slug],
+    queryFn: () => getVaultConfigData(vaultConfig),
     refetchInterval: 300_000,
     staleTime: 60_000,
   })

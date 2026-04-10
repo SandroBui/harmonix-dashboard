@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useRoleCheck } from '@/lib/safe/hooks'
 import { truncateAddress } from '@/lib/format'
 import { getTimelockPageData } from '@/lib/timelocks-reader'
+import { useVaultConfig } from '@/lib/vault-context'
 import DurationsTab from './DurationsTab'
 import SubmitTab from './SubmitTab'
 import RevokeTab from './RevokeTab'
@@ -20,10 +21,11 @@ const TAB_LABELS: Record<Tab, string> = {
 export default function TimelockClient() {
   const [activeTab, setActiveTab] = useState<Tab>('durations')
   const { safeAddress, hasRole, isSafeOwner } = useRoleCheck('admin')
+  const vaultConfig = useVaultConfig()
 
   const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery({
-    queryKey: ['timelocks', 'pageData'],
-    queryFn: getTimelockPageData,
+    queryKey: ['timelocks', 'pageData', vaultConfig.slug],
+    queryFn: () => getTimelockPageData(vaultConfig),
     refetchInterval: 300_000,
     staleTime: 60_000,
   })

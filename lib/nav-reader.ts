@@ -1,18 +1,11 @@
-import { createPublicClient, http } from 'viem'
 import {
-  HA_VAULT_READER_ADDRESS,
   HA_VAULT_READER_ABI,
-  FUND_NAV_FEED_ADDRESS,
   FUND_NAV_FEED_ABI,
   VAULT_MANAGER_ABI,
-  ASSET_METADATA,
 } from './contracts'
-import { hyperEvmMainnet } from './wagmi-config'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { getPublicClient } from './client'
+import { fetchAssetMetadataForAddresses } from './asset-metadata'
+import type { VaultGroupConfig } from './vault-group-config'
 
 // ─── Serialisable output types (no bigints) ───────────────────────────────────
 
@@ -64,18 +57,28 @@ export type NavPageData = {
 
 // ─── Main fetch function ──────────────────────────────────────────────────────
 
-export async function getNavPageData(): Promise<NavPageData> {
-  // ── Step 1: discover VaultManager address from FundNavFeed ────────────────
+export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageData> {
+  const publicClient = getPublicClient()
+  const { haVaultReaderAddress } = config
+
+  // ── Step 1: get FundNavFeed address from HaVaultReader ───────────────────
+  const fundNavFeedAddress = await publicClient.readContract({
+    address: haVaultReaderAddress,
+    abi: HA_VAULT_READER_ABI,
+    functionName: 'getFundNav',
+  }) as `0x${string}`
+
+  // ── Step 2: discover VaultManager address from FundNavFeed ────────────────
   const vaultManagerAddress = await publicClient.readContract({
-    address: FUND_NAV_FEED_ADDRESS,
+    address: fundNavFeedAddress,
     abi: FUND_NAV_FEED_ABI,
     functionName: 'vaultManager',
   }) as `0x${string}`
 
-  // ── Batch 2: global state (all in parallel) ───────────────────────────────
+  // ── Batch 3: global state (all in parallel) ───────────────────────────────
   const [navSnapshot, registeredAssets, storedPps, lastNavUpdatedValue, vaultOverviews] = await Promise.all([
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getNavSnapshot',
     }) as Promise<{
@@ -88,12 +91,12 @@ export async function getNavPageData(): Promise<NavPageData> {
       isValidPps: boolean
     }>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getRegisteredAssets',
     }) as Promise<readonly `0x${string}`[]>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getPricePerShare',
     }) as Promise<bigint>,
@@ -103,7 +106,7 @@ export async function getNavPageData(): Promise<NavPageData> {
       functionName: 'lastNavUpdated',
     }) as Promise<bigint>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getAllVaultOverviews',
     }) as Promise<readonly {
@@ -118,16 +121,16 @@ export async function getNavPageData(): Promise<NavPageData> {
     }[]>,
   ])
 
-  // ── Batch 3: per-asset data (all in parallel) ─────────────────────────────
+  // ── Batch 4: per-asset data (all in parallel) ─────────────────────────────
   const assetList = [...registeredAssets]
 
-  const [storedNavData, offChainNavs, categoriesPerAsset] = assetList.length > 0
+  const [storedNavData, offChainNavs, categoriesPerAsset, assetMetadata] = assetList.length > 0
     ? await Promise.all([
         // Stored per-asset navs and denominations from HaVaultReader
         Promise.all(
           assetList.map((asset) =>
             publicClient.readContract({
-              address: HA_VAULT_READER_ADDRESS,
+              address: haVaultReaderAddress,
               abi: HA_VAULT_READER_ABI,
               functionName: 'getAssetNavAndDenomination',
               args: [asset],
@@ -138,7 +141,7 @@ export async function getNavPageData(): Promise<NavPageData> {
         Promise.all(
           assetList.map((asset) =>
             publicClient.readContract({
-              address: FUND_NAV_FEED_ADDRESS,
+              address: fundNavFeedAddress,
               abi: FUND_NAV_FEED_ABI,
               functionName: 'fundNavValue',
               args: [asset],
@@ -149,18 +152,19 @@ export async function getNavPageData(): Promise<NavPageData> {
         Promise.all(
           assetList.map((asset) =>
             publicClient.readContract({
-              address: FUND_NAV_FEED_ADDRESS,
+              address: fundNavFeedAddress,
               abi: FUND_NAV_FEED_ABI,
               functionName: 'categories',
               args: [asset],
             }) as Promise<readonly { isActive: boolean; description: string; nav: bigint }[]>
           ),
         ),
+        // ERC-20 symbol + decimals for each asset
+        fetchAssetMetadataForAddresses(assetList),
       ])
-    : [[], [], []]
+    : [[], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
 
   // ── Aggregate claimable / pending in denomination units ───────────────────
-  // denomination = assets * navDenomination / navAsset  (same formula as FundSummaryCards)
   function assetsToDenomination(assets: bigint, navAsset: bigint, navDenomination: bigint): bigint {
     if (assets === 0n || navAsset === 0n) return 0n
     return (assets * navDenomination) / navAsset
@@ -173,21 +177,18 @@ export async function getNavPageData(): Promise<NavPageData> {
     .toString()
 
   // ── Assemble per-asset data ───────────────────────────────────────────────
-  // Build a lookup: asset address (lowercase) → vault overview
   const overviewByAsset = new Map(
     (vaultOverviews as typeof vaultOverviews[number][]).map((v) => [v.asset.toLowerCase(), v])
   )
 
   const assets: AssetNavData[] = assetList.map((asset, i) => {
     const assetAddr = asset.toLowerCase()
-    const meta = ASSET_METADATA[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
+    const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
 
     const [storedNav, storedDenomination] = ((storedNavData as unknown) as [bigint, bigint][])[i] ?? [0n, 0n]
     const offChainNav = (offChainNavs as bigint[])[i] ?? 0n
     const rawCategories = ((categoriesPerAsset as unknown) as { isActive: boolean; description: string; nav: bigint }[][])[i] ?? []
 
-    // Use vault overview's navAsset / navDenomination as the conversion ratio.
-    // Fall back to the stored values if the vault isn't in the overview list.
     const overview = overviewByAsset.get(assetAddr)
     const navAsset = overview?.navAsset ?? storedNav
     const navDenom  = overview?.navDenomination ?? storedDenomination
@@ -199,7 +200,6 @@ export async function getNavPageData(): Promise<NavPageData> {
     const pendingDenomination   = assetsToDenomination(pending,   navAsset, navDenom)
     const offChainDenomination  = assetsToDenomination(offChainNav, navAsset, navDenom)
 
-    // Effective = stored denomination minus claimable and pending (clamped to 0)
     const effectiveRaw = storedDenomination - claimableDenomination - pendingDenomination
     const effectiveDenomination = effectiveRaw > 0n ? effectiveRaw : 0n
 
@@ -226,7 +226,7 @@ export async function getNavPageData(): Promise<NavPageData> {
 
   return {
     vaultManagerAddress: vaultManagerAddress.toLowerCase(),
-    fundNavFeedAddress: FUND_NAV_FEED_ADDRESS.toLowerCase(),
+    fundNavFeedAddress: fundNavFeedAddress.toLowerCase(),
     liveNavDenomination: navSnapshot.navDenomination.toString(),
     liveEffNavDenomination: navSnapshot.effNavDenomination.toString(),
     livePpsValue: navSnapshot.ppsValue.toString(),

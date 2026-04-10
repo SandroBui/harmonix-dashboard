@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { ROLE_LABELS } from '@/lib/safe/roles'
 import type { RoleType } from '@/lib/safe/roles'
 import type { SafeInfo } from '@/lib/safe/types'
-import { ASSET_METADATA } from '@/lib/contracts'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import type { RoleTaggedTx } from './SafeTxClient'
 import SafeTxDetail from './SafeTxDetail'
 
@@ -46,6 +46,7 @@ function SafeMetaBadge({ safeAddress, safeInfo }: { safeAddress: string; safeInf
 
 export default function SafeTxList({ transactions, vaultAssetMap }: Props) {
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
+  const { data: assetMetadata } = useAssetMetadata()
 
   return (
     <div className="space-y-2">
@@ -57,7 +58,7 @@ export default function SafeTxList({ transactions, vaultAssetMap }: Props) {
         const fulfillTokenAddr = tx.dataDecoded?.method === 'fulfillRedeem'
           ? vaultAssetMap[tx.to.toLowerCase()]
           : undefined
-        const fulfillAsset = fulfillTokenAddr ? ASSET_METADATA[fulfillTokenAddr] : undefined
+        const fulfillAsset = fulfillTokenAddr ? assetMetadata?.[fulfillTokenAddr] : undefined
 
         return (
           <div

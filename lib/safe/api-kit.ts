@@ -1,22 +1,19 @@
 import SafeApiKit from '@safe-global/api-kit'
-import { getDefaultSafeAddress } from './roles'
 
-let _apiKit: SafeApiKit | null = null
+const kits = new Map<number, SafeApiKit>()
 
 /**
- * Returns a singleton SafeApiKit instance for HyperEVM (chain 999).
- * api.safe.global always requires an API key — set NEXT_PUBLIC_SAFE_API_KEY.
- * Get one free at https://developer.safe.global
+ * Returns a cached SafeApiKit instance for the given chainId (default: 999 HyperEVM).
+ * NEXT_PUBLIC_SAFE_API_KEY must be set — get a free key at https://developer.safe.global
  */
-export function getApiKit(): SafeApiKit {
-  if (_apiKit) return _apiKit
+export function getApiKit(chainId: number = 999): SafeApiKit {
+  const existing = kits.get(chainId)
+  if (existing) return existing
+
   const apiKey = process.env.NEXT_PUBLIC_SAFE_API_KEY
   if (!apiKey) throw new Error('NEXT_PUBLIC_SAFE_API_KEY is not set. Get a free key at https://developer.safe.global')
-  _apiKit = new SafeApiKit({ chainId: 999n, apiKey })
-  return _apiKit
-}
 
-/** @deprecated Use `getSafeAddressForRole(role)` or `getDefaultSafeAddress()` from roles.ts */
-export function getSafeAddress(): `0x${string}` {
-  return getDefaultSafeAddress()
+  const kit = new SafeApiKit({ chainId: BigInt(chainId), apiKey })
+  kits.set(chainId, kit)
+  return kit
 }

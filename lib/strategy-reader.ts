@@ -1,11 +1,7 @@
-import { createPublicClient, http } from 'viem'
-import { HA_VAULT_READER_ADDRESS, HA_VAULT_READER_ABI, ASSET_METADATA, STRATEGY_ABI } from './contracts'
-import { hyperEvmMainnet } from './wagmi-config'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { HA_VAULT_READER_ABI, STRATEGY_ABI } from './contracts'
+import { getPublicClient } from './client'
+import { fetchAssetMetadataForAddresses } from './asset-metadata'
+import type { VaultGroupConfig } from './vault-group-config'
 
 // ─── Serialisable output types (no bigints) ───────────────────────────────────
 
@@ -35,20 +31,21 @@ export type StrategyPageData = {
   fetchedAt: number
 }
 
-// ─── Typed readContract helper ────────────────────────────────────────────────
-
-function read(functionName: string, args?: unknown[]) {
-  return publicClient.readContract({
-    address: HA_VAULT_READER_ADDRESS,
-    abi: HA_VAULT_READER_ABI,
-    functionName: functionName as never,
-    ...(args ? { args: args as never } : {}),
-  })
-}
-
 // ─── Main fetch function ──────────────────────────────────────────────────────
 
-export async function getStrategyPageData(): Promise<StrategyPageData> {
+export async function getStrategyPageData(config: VaultGroupConfig): Promise<StrategyPageData> {
+  const publicClient = getPublicClient()
+  const { haVaultReaderAddress } = config
+
+  function read(functionName: string, args?: unknown[]) {
+    return publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: functionName as never,
+      ...(args ? { args: args as never } : {}),
+    })
+  }
+
   // ── Batch 1: global state ────────────────────────────────────────────────
   const [assets, fundVaultAddress] = await Promise.all([
     read('getRegisteredAssets') as Promise<readonly `0x${string}`[]>,
@@ -60,10 +57,11 @@ export async function getStrategyPageData(): Promise<StrategyPageData> {
   }
 
   // ── Batch 2: per-asset data ──────────────────────────────────────────────
-  const [strategyLists, idleAmounts, totalManagedAmounts] = await Promise.all([
+  const [strategyLists, idleAmounts, totalManagedAmounts, assetMetadata] = await Promise.all([
     Promise.all(assets.map((asset) => read('getStrategies', [asset]) as Promise<readonly `0x${string}`[]>)),
     Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
     Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
+    fetchAssetMetadataForAddresses(assets),
   ])
 
   // ── Batch 3: per-strategy data ───────────────────────────────────────────
@@ -90,7 +88,7 @@ export async function getStrategyPageData(): Promise<StrategyPageData> {
 
   const assetSummaries: AssetStrategySummary[] = assets.map((asset, i) => {
     const assetAddr = asset.toLowerCase()
-    const meta = ASSET_METADATA[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
+    const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
     const idle = idleAmounts[i] ?? 0n
     const totalManaged = totalManagedAmounts[i] ?? 0n
     const deployed = totalManaged > idle ? totalManaged - idle : 0n

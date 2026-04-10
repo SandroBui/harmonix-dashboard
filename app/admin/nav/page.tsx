@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { getNavPageData } from '@/lib/nav-reader'
+import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import NavClient from './components/NavClient'
 
 export const dynamic = 'force-dynamic'
@@ -9,11 +10,16 @@ export const metadata: Metadata = {
   description: 'View and update Net Asset Value components for the Harmonix fund.',
 }
 
-export default async function NavPage() {
+export default async function NavPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vault?: string }>
+}) {
+  const config = resolveVaultFromParams(await searchParams)
   let data
 
   try {
-    data = await getNavPageData()
+    data = await getNavPageData(config)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return (

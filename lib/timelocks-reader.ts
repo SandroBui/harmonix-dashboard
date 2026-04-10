@@ -1,19 +1,13 @@
-import { createPublicClient, http, toFunctionSelector } from 'viem'
+import { toFunctionSelector } from 'viem'
 import {
-  HA_VAULT_READER_ADDRESS,
   HA_VAULT_READER_ABI,
-  FUND_NAV_FEED_ADDRESS,
   FUND_NAV_FEED_ABI,
   VAULT_MANAGER_ABI,
   FUND_VAULT_ABI,
   VAULT_MANAGER_ADMIN_ABI,
 } from './contracts'
-import { hyperEvmMainnet } from './wagmi-config'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { getPublicClient } from './client'
+import type { VaultGroupConfig } from './vault-group-config'
 
 // ─── Known timelocked functions ───────────────────────────────────────────────
 
@@ -99,7 +93,7 @@ export type TimelockEntry = {
 }
 
 export type PendingOperation = {
-  id: string           // keccak256(data) used as stable key
+  id: string           // stable key
   fnName: string
   selector: string
   data: string         // raw calldata hex
@@ -119,16 +113,25 @@ export type TimelockPageData = {
 
 // ─── Main fetch function ──────────────────────────────────────────────────────
 
-export async function getTimelockPageData(): Promise<TimelockPageData> {
-  // ── Step 1: get contract addresses ──────────────────────────────────────────
+export async function getTimelockPageData(config: VaultGroupConfig): Promise<TimelockPageData> {
+  const publicClient = getPublicClient()
+  const { haVaultReaderAddress } = config
+
+  // ── Step 1: get FundNavFeed from reader, then VaultManager from FundNavFeed ─
+  const fundNavFeedAddress = await publicClient.readContract({
+    address: haVaultReaderAddress,
+    abi: HA_VAULT_READER_ABI,
+    functionName: 'getFundNav',
+  }) as `0x${string}`
+
   const [fundVaultAddress, vaultManagerAddress] = await Promise.all([
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getFundVault',
     }) as Promise<`0x${string}`>,
     publicClient.readContract({
-      address: FUND_NAV_FEED_ADDRESS,
+      address: fundNavFeedAddress,
       abi: FUND_NAV_FEED_ABI,
       functionName: 'vaultManager',
     }) as Promise<`0x${string}`>,
@@ -149,7 +152,7 @@ export async function getTimelockPageData(): Promise<TimelockPageData> {
     Promise.all(
       fundVaultFns.map((f) =>
         publicClient.readContract({
-          address: HA_VAULT_READER_ADDRESS,
+          address: haVaultReaderAddress,
           abi: HA_VAULT_READER_ABI,
           functionName: 'getTimelockDuration',
           args: [fundVaultAddress, f.selector as `0x${string}`],
@@ -159,7 +162,7 @@ export async function getTimelockPageData(): Promise<TimelockPageData> {
     Promise.all(
       vaultAdminFns.map((f) =>
         publicClient.readContract({
-          address: HA_VAULT_READER_ADDRESS,
+          address: haVaultReaderAddress,
           abi: HA_VAULT_READER_ABI,
           functionName: 'getTimelockDuration',
           args: [vaultManagerAdminAddress, f.selector as `0x${string}`],
@@ -197,13 +200,13 @@ export async function getTimelockPageData(): Promise<TimelockPageData> {
 
   const [fvPending, vaaPending] = await Promise.all([
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getContractPending',
       args: [fundVaultAddress],
     }) as Promise<readonly RawPendingOp[]>,
     publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getContractPending',
       args: [vaultManagerAdminAddress],

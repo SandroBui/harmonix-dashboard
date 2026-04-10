@@ -6,6 +6,7 @@ import { encodeFunctionData, getAddress } from 'viem'
 import { VAULT_MANAGER_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
 import { formatTokenAmount } from '@/lib/format'
 import type { NavPageData } from '@/lib/nav-reader'
 
@@ -18,9 +19,10 @@ type Props = {
 
 export default function UpdateNavSection({ data, canPropose, isConnected }: Props) {
   const { chainId } = useAccount()
+  const config = useVaultConfig()
   const vaultManagerAddress = getAddress(data.vaultManagerAddress) as `0x${string}`
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole('operator'))
+  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'operator'))
 
   const isWrongChain = isConnected && chainId !== 999
 

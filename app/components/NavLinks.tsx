@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 
 const NAV_LINKS: { href: string; label: string; danger?: boolean }[] = [
   { href: '/status', label: 'Status' },
@@ -16,6 +16,13 @@ const NAV_LINKS: { href: string; label: string; danger?: boolean }[] = [
 
 export default function NavLinks() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const vaultParam = searchParams.get('vault')
+
+  function buildHref(path: string) {
+    if (!vaultParam) return path
+    return `${path}?vault=${vaultParam}`
+  }
 
   return (
     <>
@@ -24,7 +31,7 @@ export default function NavLinks() {
         return (
           <Link
             key={href}
-            href={href}
+            href={buildHref(href)}
             className={`text-sm ${
               danger
                 ? isActive

@@ -1,4 +1,5 @@
 import { keccak256, toHex } from 'viem'
+import type { VaultGroupConfig, SafeAddresses } from '@/lib/vault-group-config'
 
 export type RoleType = 'operator' | 'curator' | 'price_updater' | 'timelock_proposer' | 'admin'
 
@@ -19,26 +20,24 @@ export const ROLE_LABELS: Record<RoleType, string> = {
   admin: 'Admin',
 }
 
-/** Returns the default Safe address (fallback for all roles). */
-export function getDefaultSafeAddress(): `0x${string}` {
-  const addr = process.env.NEXT_PUBLIC_SAFE_ADDRESS
-  if (!addr) return '0x' as `0x${string}`
-  return addr as `0x${string}`
+// Map RoleType to the SafeAddresses property name
+const ROLE_TO_SAFE_KEY: Record<RoleType, keyof SafeAddresses> = {
+  operator: 'operator',
+  curator: 'curator',
+  price_updater: 'priceUpdater',
+  timelock_proposer: 'timelockProposer',
+  admin: 'admin',
 }
 
-// Static access is required for Next.js to inline NEXT_PUBLIC_* vars at build time.
-// Dynamic bracket notation (process.env[variable]) returns undefined in the browser.
-const SAFE_ADDRESSES: Record<RoleType, string | undefined> = {
-  operator:      process.env.NEXT_PUBLIC_SAFE_OPERATOR,
-  curator:       process.env.NEXT_PUBLIC_SAFE_CURATOR,
-  price_updater: process.env.NEXT_PUBLIC_SAFE_PRICE_UPDATER,
-  timelock_proposer: process.env.NEXT_PUBLIC_TIMELOCK_ADDRESS,
-  admin:         process.env.NEXT_PUBLIC_SAFE_ADMIN,
+/** Returns the default Safe address for a vault group. */
+export function getDefaultSafeAddress(config: VaultGroupConfig): `0x${string}` {
+  return config.safe.default
 }
 
-/** Returns the Safe address for a given role, falling back to NEXT_PUBLIC_SAFE_ADDRESS. */
-export function getSafeAddressForRole(role: RoleType): `0x${string}` {
-  const addr = SAFE_ADDRESSES[role]
+/** Returns the Safe address for a given role within a vault group, falling back to default. */
+export function getSafeAddressForRole(config: VaultGroupConfig, role: RoleType): `0x${string}` {
+  const key = ROLE_TO_SAFE_KEY[role]
+  const addr = config.safe[key]
   if (addr) return addr as `0x${string}`
-  return getDefaultSafeAddress()
+  return config.safe.default
 }

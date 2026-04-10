@@ -1,15 +1,21 @@
 import type { Metadata } from 'next'
 import { getStrategyPageData } from '@/lib/strategy-reader'
+import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import RefreshButton from '../withdrawals/components/RefreshButton'
 import StrategyClient from './components/StrategyClient'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Strategies — Harmonix' }
 
-export default async function StrategiesPage() {
+export default async function StrategiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vault?: string }>
+}) {
+  const config = resolveVaultFromParams(await searchParams)
   let data
   try {
-    data = await getStrategyPageData()
+    data = await getStrategyPageData(config)
   } catch (err) {
     return (
       <main className="mx-auto max-w-7xl px-4 py-10">

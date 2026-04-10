@@ -1,21 +1,15 @@
-import { createPublicClient, http, toFunctionSelector } from 'viem'
+import { toFunctionSelector } from 'viem'
 import {
-  HA_VAULT_READER_ADDRESS,
   HA_VAULT_READER_ABI,
-  FUND_NAV_FEED_ADDRESS,
   FUND_NAV_FEED_ABI,
   VAULT_MANAGER_ABI,
 } from '@/lib/contracts'
-import { hyperEvmMainnet } from '@/lib/wagmi-config'
+import { getPublicClient } from '@/lib/client'
+import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import { getFundStatus } from '@/lib/status-reader'
 import EmergencyClient from './components/EmergencyClient'
 
 export const dynamic = 'force-dynamic'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
 
 // Functions we track disabled status for
 const TRACKED_FUNCTIONS = [
@@ -26,7 +20,16 @@ const TRACKED_FUNCTIONS = [
 
 export type DisabledFunctionsMap = Record<string, Record<string, boolean>>
 
-export default async function EmergencyPage() {
+export default async function EmergencyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ vault?: string }>
+}) {
+  const config = resolveVaultFromParams(await searchParams)
+  const { haVaultReaderAddress } = config
+
+  const publicClient = getPublicClient()
+
   let data: Awaited<ReturnType<typeof getFundStatus>> | null = null
   let vaultManagerAdminAddress = ''
   let fundVaultAddress = ''
@@ -35,10 +38,17 @@ export default async function EmergencyPage() {
   let error = ''
 
   try {
+    // Get FundNavFeed from reader
+    const fundNavFeedAddress = await publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'getFundNav',
+    }) as `0x${string}`
+
     const [status, vaultManagerAddress] = await Promise.all([
-      getFundStatus(),
+      getFundStatus(config),
       publicClient.readContract({
-        address: FUND_NAV_FEED_ADDRESS,
+        address: fundNavFeedAddress,
         abi: FUND_NAV_FEED_ABI,
         functionName: 'vaultManager',
       }) as Promise<`0x${string}`>,
@@ -47,7 +57,7 @@ export default async function EmergencyPage() {
 
     const [fundVault, adminFacet] = await Promise.all([
       publicClient.readContract({
-        address: HA_VAULT_READER_ADDRESS,
+        address: haVaultReaderAddress,
         abi: HA_VAULT_READER_ABI,
         functionName: 'getFundVault',
       }) as Promise<`0x${string}`>,
@@ -83,7 +93,7 @@ export default async function EmergencyPage() {
       }
 
       const results = await publicClient.readContract({
-        address: HA_VAULT_READER_ADDRESS,
+        address: haVaultReaderAddress,
         abi: HA_VAULT_READER_ABI,
         functionName: 'getFunctionDisabledBatch',
         args: [haContracts, selectorArgs],

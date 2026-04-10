@@ -7,6 +7,7 @@ import { encodeFunctionData, getAddress } from 'viem'
 import { VAULT_ASSET_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
 import type { SafeInfo } from '@/lib/safe/types'
 import type { Withdrawal } from '@/lib/vault-reader'
 
@@ -18,8 +19,9 @@ type Props = {
 
 export default function CancelPanel({ selected, safeInfo, onSuccess }: Props) {
   const { address, isConnected, chainId } = useAccount()
+  const config = useVaultConfig()
 
-  const cancelTx = useProposeSafeTransaction(getSafeAddressForRole('operator'))
+  const cancelTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'operator'))
 
   useEffect(() => {
     if (cancelTx.isSuccess) {

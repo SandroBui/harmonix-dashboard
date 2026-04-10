@@ -4,6 +4,7 @@ import Link from "next/link";
 import Providers from "./providers";
 import ConnectWallet from "./components/ConnectWallet";
 import NavLinks from "./components/NavLinks";
+import VaultSelector from "./components/VaultSelector";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -42,7 +43,8 @@ export default function RootLayout({
                 Harmonix
               </Link>
               <NavLinks />
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-3">
+                <VaultSelector />
                 <ConnectWallet />
               </div>
             </nav>

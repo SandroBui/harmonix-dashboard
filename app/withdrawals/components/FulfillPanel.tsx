@@ -5,9 +5,10 @@ import { useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { VAULT_ASSET_ABI } from '@/lib/abis'
-import { ASSET_METADATA } from '@/lib/contracts'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import type { SafeInfo } from '@/lib/safe/types'
 import type { Withdrawal } from '@/lib/vault-reader'
 
@@ -31,8 +32,10 @@ function formatUnits(value: string, decimals: number): string {
 
 export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, onSuccess }: Props) {
   const { address, isConnected, chainId } = useAccount()
+  const config = useVaultConfig()
+  const { data: assetMetadata } = useAssetMetadata()
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole('operator'))
+  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'operator'))
 
   useEffect(() => {
     if (proposeTx.isSuccess) {
@@ -45,7 +48,7 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, onSucc
 
   const vaultAddress = getAddress(selected[0].vault) as `0x${string}`
   const assetAddr = vaultAssetMap[selected[0].vault]
-  const meta = assetAddr ? ASSET_METADATA[assetAddr] : undefined
+  const meta = assetAddr ? assetMetadata?.[assetAddr] : undefined
 
   const totalAmount = selected.reduce((sum, w) => sum + BigInt(w.assets), 0n)
   const controllers = selected.map((w) => getAddress(w.controller) as `0x${string}`)

@@ -1,6 +1,6 @@
 import { decodeFunctionData, toFunctionSelector } from 'viem'
 import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
-import { ASSET_METADATA } from '@/lib/contracts'
+import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { getApiKit } from './api-kit'
 import type { DataDecoded, DecodedParam } from './types'
@@ -100,6 +100,7 @@ export function summarizeDecodedData(
   to: string,
   value: string,
   vaultAssetMap?: Record<string, string>,
+  assetMetadata: Record<string, AssetMeta> = {},
 ): string {
   if (!decoded) {
     if (value !== '0' && value !== '') {
@@ -115,7 +116,7 @@ export function summarizeDecodedData(
     const totalAmount = parameters.find((p) => p.name === 'totalAmount')
     const controllers = parameters.find((p) => p.name === 'controllers')
     const tokenAddr = vaultAssetMap?.[to.toLowerCase()]
-    const assetMeta = tokenAddr ? ASSET_METADATA[tokenAddr] : ASSET_METADATA[to.toLowerCase()]
+    const assetMeta = tokenAddr ? assetMetadata[tokenAddr] : assetMetadata[to.toLowerCase()]
     const formatted = assetMeta && totalAmount
       ? formatAmount(totalAmount.value, assetMeta.decimals) + ' ' + assetMeta.symbol
       : (totalAmount?.value ?? '?')
@@ -129,7 +130,7 @@ export function summarizeDecodedData(
   if (method === 'transfer') {
     const recipient = parameters.find((p) => p.name === 'to')
     const amount = parameters.find((p) => p.name === 'amount')
-    const assetMeta = ASSET_METADATA[to.toLowerCase()]
+    const assetMeta = assetMetadata[to.toLowerCase()]
     const formatted = assetMeta && amount
       ? formatAmount(amount.value, assetMeta.decimals) + ' ' + assetMeta.symbol
       : (amount?.value ?? '?')
@@ -138,7 +139,7 @@ export function summarizeDecodedData(
 
   if (method === 'approve') {
     const spender = parameters.find((p) => p.name === 'spender')
-    const assetMeta = ASSET_METADATA[to.toLowerCase()]
+    const assetMeta = assetMetadata[to.toLowerCase()]
     return `Approve ${assetMeta?.symbol ?? truncate(to)} for ${truncate(spender?.value ?? '')}`
   }
 
@@ -147,7 +148,7 @@ export function summarizeDecodedData(
     const asset = parameters.find((p) => p.name === 'asset')?.value ?? ''
     const desc = parameters.find((p) => p.name === 'description')?.value ?? '?'
     const nav = parameters.find((p) => p.name === 'nav')?.value ?? '0'
-    const meta = ASSET_METADATA[asset.toLowerCase()]
+    const meta = assetMetadata[asset.toLowerCase()]
     const amount = meta ? formatAmount(nav, meta.decimals) + ' ' + meta.symbol : nav
     return `Sync NAV — "${desc}" → ${amount}`
   }
@@ -155,7 +156,7 @@ export function summarizeDecodedData(
   if (method === 'addNavCategory') {
     const asset = parameters.find((p) => p.name === 'asset')?.value ?? ''
     const desc = parameters.find((p) => p.name === 'description')?.value ?? '?'
-    const meta = ASSET_METADATA[asset.toLowerCase()]
+    const meta = assetMetadata[asset.toLowerCase()]
     const label = meta ? meta.symbol : truncate(asset)
     return `Add NAV category "${desc}" for ${label}`
   }
@@ -163,7 +164,7 @@ export function summarizeDecodedData(
   if (method === 'removeNavCategory') {
     const asset = parameters.find((p) => p.name === 'asset')?.value ?? ''
     const desc = parameters.find((p) => p.name === 'description')?.value ?? '?'
-    const meta = ASSET_METADATA[asset.toLowerCase()]
+    const meta = assetMetadata[asset.toLowerCase()]
     const label = meta ? meta.symbol : truncate(asset)
     return `Remove NAV category "${desc}" from ${label}`
   }
@@ -172,7 +173,7 @@ export function summarizeDecodedData(
     const asset = parameters.find((p) => p.name === 'asset')?.value ?? ''
     const desc = parameters.find((p) => p.name === 'description')?.value ?? '?'
     const isActive = parameters.find((p) => p.name === 'isActive')?.value
-    const meta = ASSET_METADATA[asset.toLowerCase()]
+    const meta = assetMetadata[asset.toLowerCase()]
     const label = meta ? meta.symbol : truncate(asset)
     const status = isActive === 'true' ? 'Activate' : 'Deactivate'
     return `${status} NAV category "${desc}" for ${label}`

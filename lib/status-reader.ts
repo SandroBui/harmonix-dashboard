@@ -1,12 +1,8 @@
-import { createPublicClient, http } from 'viem'
-import { HA_VAULT_READER_ADDRESS, HA_VAULT_READER_ABI, ASSET_METADATA, FUND_NAV_FEED_ADDRESS, FUND_NAV_FEED_ABI } from './contracts'
-import { hyperEvmMainnet } from './wagmi-config'
+import { HA_VAULT_READER_ABI, FUND_NAV_FEED_ABI } from './contracts'
+import { getPublicClient } from './client'
 import { getAllWithdrawals } from './vault-reader'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { fetchAssetMetadataForAddresses } from './asset-metadata'
+import type { VaultGroupConfig } from './vault-group-config'
 
 // Minimal ERC-20 ABI — only balanceOf is needed
 const ERC20_ABI = [
@@ -80,24 +76,6 @@ export type FundStatusData = {
   fetchedAt: number // Date.now() — used by client for "updated Xs ago" display
 }
 
-// ─── Typed readContract helper ────────────────────────────────────────────────
-
-function read<F extends 'getAllVaultOverviews' | 'getNavSnapshot' | 'getRedeemQueueLength' | 'getRedeemMode' | 'getPricePerShare' | 'getFundVault' | 'getFundNav'>(
-  functionName: F,
-): ReturnType<typeof publicClient.readContract>
-function read<F extends 'getIdleAssets' | 'getTotalManagedAssets' | 'getStrategies' | 'getAllocated'>(
-  functionName: F,
-  args: [`0x${string}`],
-): ReturnType<typeof publicClient.readContract>
-function read(functionName: string, args?: unknown[]) {
-  return publicClient.readContract({
-    address: HA_VAULT_READER_ADDRESS,
-    abi: HA_VAULT_READER_ABI,
-    functionName: functionName as never,
-    ...(args ? { args: args as never } : {}),
-  })
-}
-
 // ─── Main fetch function ──────────────────────────────────────────────────────
 
 /**
@@ -108,9 +86,28 @@ function read(functionName: string, args?: unknown[]) {
  * Batch 2: Per-asset capital breakdown — 3N parallel calls for N assets
  * Batch 3: Per-strategy allocations — M parallel calls (skipped if none)
  */
-export async function getFundStatus(): Promise<FundStatusData> {
+export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatusData> {
+  const publicClient = getPublicClient()
+  const { haVaultReaderAddress } = config
+
+  function read<F extends 'getAllVaultOverviews' | 'getNavSnapshot' | 'getRedeemQueueLength' | 'getRedeemMode' | 'getPricePerShare' | 'getFundVault' | 'getFundNav'>(
+    functionName: F,
+  ): ReturnType<typeof publicClient.readContract>
+  function read<F extends 'getIdleAssets' | 'getTotalManagedAssets' | 'getStrategies' | 'getAllocated'>(
+    functionName: F,
+    args: [`0x${string}`],
+  ): ReturnType<typeof publicClient.readContract>
+  function read(functionName: string, args?: unknown[]) {
+    return publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: functionName as never,
+      ...(args ? { args: args as never } : {}),
+    })
+  }
+
   // ── Batch 1: global state (all in parallel) ───────────────────────────────
-  const [overviews, nav, queueLen, redeemMode, pps, fundVaultAddress, fundNavAddress, allWithdrawals] = await Promise.all([
+  const [overviews, nav, queueLen, redeemMode, pps, fundVaultAddress, fundNavFeedAddress, allWithdrawals] = await Promise.all([
     read('getAllVaultOverviews') as Promise<readonly {
       vault: `0x${string}`
       asset: `0x${string}`
@@ -135,13 +132,13 @@ export async function getFundStatus(): Promise<FundStatusData> {
     read('getPricePerShare') as Promise<bigint>,
     read('getFundVault') as Promise<`0x${string}`>,
     read('getFundNav') as Promise<`0x${string}`>,
-    getAllWithdrawals(),
+    getAllWithdrawals(config),
   ])
 
   const assets = overviews.map((o) => o.asset)
 
   // ── Batch 2: per-asset capital breakdown + vault asset balances (all in parallel) ──
-  const [idleAmounts, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, fundNavBalances] = assets.length > 0
+  const [idleAmounts, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, fundNavBalances, assetMetadata] = assets.length > 0
     ? await Promise.all([
         Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
         Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
@@ -167,14 +164,16 @@ export async function getFundStatus(): Promise<FundStatusData> {
         // fundNavValue(asset) — NAV tracked in FundNavFeed per asset
         Promise.all(overviews.map((o) =>
           publicClient.readContract({
-            address: FUND_NAV_FEED_ADDRESS,
+            address: fundNavFeedAddress,
             abi: FUND_NAV_FEED_ABI,
             functionName: 'fundNavValue',
             args: [o.asset],
           }) as Promise<bigint>
         )),
+        // ERC-20 symbol + decimals for each asset
+        fetchAssetMetadataForAddresses(assets),
       ])
-    : [[], [], [], [], [], []]
+    : [[], [], [], [], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
 
   // ── Batch 3: per-strategy allocations (all in parallel) ──────────────────
   const allStrategies = (strategyLists as unknown as `0x${string}`[][]).flat()
@@ -189,7 +188,7 @@ export async function getFundStatus(): Promise<FundStatusData> {
 
   const vaults: VaultOverviewData[] = overviews.map((o, i) => {
     const assetAddr = o.asset.toLowerCase()
-    const meta = ASSET_METADATA[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
+    const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
 
     const idle: bigint = (idleAmounts as bigint[])[i] ?? 0n
     const totalManaged: bigint = (totalManagedAmounts as bigint[])[i] ?? 0n

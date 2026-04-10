@@ -1,11 +1,6 @@
-import { createPublicClient, http } from 'viem'
-import { HA_VAULT_READER_ADDRESS, HA_VAULT_READER_ABI } from './contracts'
-import { hyperEvmMainnet } from './wagmi-config'
-
-const publicClient = createPublicClient({
-  chain: hyperEvmMainnet,
-  transport: http(),
-})
+import { HA_VAULT_READER_ABI } from './contracts'
+import { getPublicClient } from './client'
+import type { VaultGroupConfig } from './vault-group-config'
 
 /** Serializable withdrawal — bigints converted to strings for the client boundary. */
 export type Withdrawal = {
@@ -24,9 +19,10 @@ const PAGE_SIZE = 100n
  * Returns a map of vault address (lowercase) → asset address (lowercase)
  * for every registered asset vault.
  */
-export async function getVaultAssetMap(): Promise<Record<string, string>> {
+export async function getVaultAssetMap(config: VaultGroupConfig): Promise<Record<string, string>> {
+  const publicClient = getPublicClient()
   const assets = await publicClient.readContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: config.haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'getRegisteredAssets',
   })
@@ -35,7 +31,7 @@ export async function getVaultAssetMap(): Promise<Record<string, string>> {
   await Promise.all(
     assets.map(async (asset) => {
       const vault = await publicClient.readContract({
-        address: HA_VAULT_READER_ADDRESS,
+        address: config.haVaultReaderAddress,
         abi: HA_VAULT_READER_ABI,
         functionName: 'getVaultForAsset',
         args: [asset],
@@ -53,9 +49,10 @@ export async function getVaultAssetMap(): Promise<Record<string, string>> {
  * Fetches all withdrawal requests from the on-chain queue in pages of 100.
  * Returns serializable objects (no bigints) ready to pass across the server→client boundary.
  */
-export async function getAllWithdrawals(): Promise<Withdrawal[]> {
+export async function getAllWithdrawals(config: VaultGroupConfig): Promise<Withdrawal[]> {
+  const publicClient = getPublicClient()
   const length = await publicClient.readContract({
-    address: HA_VAULT_READER_ADDRESS,
+    address: config.haVaultReaderAddress,
     abi: HA_VAULT_READER_ABI,
     functionName: 'getRedeemQueueLength',
   })
@@ -68,7 +65,7 @@ export async function getAllWithdrawals(): Promise<Withdrawal[]> {
     const toId = fromId - PAGE_SIZE + 1n <= 1 ? 1n : fromId - PAGE_SIZE + 1n
 
     const page = await publicClient.readContract({
-      address: HA_VAULT_READER_ADDRESS,
+      address: config.haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getPendingWithdrawals',
       // reverse because we traverse backward

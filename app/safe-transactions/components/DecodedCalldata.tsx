@@ -1,7 +1,8 @@
 'use client'
 
 import type { DataDecoded, DecodedParam } from '@/lib/safe/types'
-import { ASSET_METADATA } from '@/lib/contracts'
+import type { AssetMeta } from '@/lib/vault-group-config'
+import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { decodeSubmitInnerData, resolveSelector } from '@/lib/safe/decoder'
 
 type Props = {
@@ -11,6 +12,8 @@ type Props = {
 }
 
 export default function DecodedCalldata({ decoded, rawData, to }: Props) {
+  const { data: assetMetadata } = useAssetMetadata()
+
   if (!decoded) {
     return (
       <div className="rounded-md bg-neutral-100 p-3 dark:bg-neutral-800">
@@ -57,7 +60,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                         <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                       </span>
                       <span className="break-all font-mono text-neutral-700 dark:text-neutral-300">
-                        {formatParamValue(inner.value, inner.type, to, innerDecoded.parameters)}
+                        {formatParamValue(inner.value, inner.type, to, innerDecoded.parameters, assetMetadata)}
                       </span>
                     </div>
                   ))}
@@ -73,7 +76,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({param.type})</span>
               </span>
               <span className="break-all font-mono text-neutral-700 dark:text-neutral-300">
-                {formatParamValue(param.value, param.type, to, decoded.parameters)}
+                {formatParamValue(param.value, param.type, to, decoded.parameters, assetMetadata)}
               </span>
             </div>
           )
@@ -83,7 +86,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
   )
 }
 
-function formatParamValue(value: string, type: string, to: string, allParams: DecodedParam[]): string {
+function formatParamValue(value: string, type: string, to: string, allParams: DecodedParam[], assetMetadata?: Record<string, AssetMeta>): string {
   if (type === 'bytes4') {
     const fnName = resolveSelector(value)
     if (fnName !== value) return `${value} (${fnName})`
@@ -92,13 +95,13 @@ function formatParamValue(value: string, type: string, to: string, allParams: De
 
   if (type === 'uint256') {
     // Primary lookup: `to` address is the token contract (e.g. ERC-20 transfer/approve)
-    let meta = ASSET_METADATA[to.toLowerCase()]
+    let meta = assetMetadata?.[to.toLowerCase()]
 
     // Secondary lookup: for FundNavFeed calls, the NAV amount is denominated in the
     // sibling `asset` parameter, not in the contract being called (`to`).
     if (!meta) {
       const assetAddr = allParams.find((p) => p.name === 'asset')?.value ?? ''
-      meta = ASSET_METADATA[assetAddr.toLowerCase()]
+      meta = assetMetadata?.[assetAddr.toLowerCase()]
     }
 
     if (meta) {

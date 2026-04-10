@@ -5,9 +5,10 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress, parseUnits } from 'viem'
 import { FUND_NAV_FEED_ABI } from '@/lib/abis'
-import { FUND_NAV_FEED_ADDRESS } from '@/lib/contracts'
 import { useProposeSafeTransaction } from '@/lib/safe/hooks'
 import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useVaultConfig } from '@/lib/vault-context'
+import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
 import { formatTokenAmount } from '@/lib/format'
 import type { NavCategoryData } from '@/lib/nav-reader'
 
@@ -25,10 +26,11 @@ type Props = {
 export default function SyncNavForm({ asset, decimals, symbol, category, canPropose, isConnected, onClose }: Props) {
   const { chainId } = useAccount()
   const [inputValue, setInputValue] = useState('')
-  const feedAddress = getAddress(FUND_NAV_FEED_ADDRESS) as `0x${string}`
+  const config = useVaultConfig()
+  const feedAddress = useFundNavFeedAddress()
   const assetAddress = getAddress(asset) as `0x${string}`
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole('operator'))
+  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'operator'))
 
   const isWrongChain = isConnected && chainId !== 999
 
@@ -43,19 +45,19 @@ export default function SyncNavForm({ asset, decimals, symbol, category, canProp
 
   function handleProposeSafe() {
     const navRaw = parseNavInput()
-    if (navRaw === null) return
+    if (navRaw === null || !feedAddress) return
     proposeTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_NAV_FEED_ABI,
       functionName: 'syncNavValue',
       args: [assetAddress, category.description, navRaw],
     })
-    proposeTx.mutate({ to: feedAddress, data: calldata })
+    proposeTx.mutate({ to: getAddress(feedAddress) as `0x${string}`, data: calldata })
   }
 
   const navRaw = parseNavInput()
   const isInputValid = navRaw !== null
-  const canSubmit = isConnected && !isWrongChain && canPropose && isInputValid && !proposeTx.isPending
+  const canSubmit = isConnected && !isWrongChain && canPropose && isInputValid && !proposeTx.isPending && Boolean(feedAddress)
 
   // ── Button state ──────────────────────────────────────────────────────────
   let label: string
