@@ -21,6 +21,7 @@ export default function SubmitTab({ data }: Props) {
   const [selectedFn, setSelectedFn] = useState<string>('')
   const [addressArg, setAddressArg] = useState('')
   const [uint256Arg, setUint256Arg] = useState('')
+  const [bytes4Arg, setBytes4Arg] = useState('')
 
   const isWrongChain = isConnected && chainId !== 999
 
@@ -36,17 +37,20 @@ export default function SubmitTab({ data }: Props) {
   const durationSeconds = timelockEntry ? Number(timelockEntry.duration) : 0
 
   function encodeInnerCalldata(): `0x${string}` | null {
-    if (!fnDef || !addressArg) return null
+    if (!fnDef) return null
     try {
-      const addr = getAddress(addressArg)
       if (fnDef.args === 'address') {
+        if (!addressArg) return null
+        const addr = getAddress(addressArg)
         return encodeFunctionData({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           abi: fnDef.abi as any,
           functionName: fnDef.name,
           args: [addr],
         })
-      } else {
+      } else if (fnDef.args === 'address_uint256') {
+        if (!addressArg) return null
+        const addr = getAddress(addressArg)
         const amt = parseUnits(uint256Arg || '0', 18)
         return encodeFunctionData({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,7 +58,27 @@ export default function SubmitTab({ data }: Props) {
           functionName: fnDef.name,
           args: [addr, amt],
         })
+      } else if (fnDef.args === 'uint256') {
+        if (!uint256Arg) return null
+        const val = BigInt(uint256Arg)
+        return encodeFunctionData({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          abi: fnDef.abi as any,
+          functionName: fnDef.name,
+          args: [val],
+        })
+      } else if (fnDef.args === 'address_bytes4') {
+        if (!addressArg || !bytes4Arg) return null
+        const addr = getAddress(addressArg)
+        const sel = bytes4Arg as `0x${string}`
+        return encodeFunctionData({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          abi: fnDef.abi as any,
+          functionName: fnDef.name,
+          args: [addr, sel],
+        })
       }
+      return null
     } catch {
       return null
     }
@@ -120,7 +144,7 @@ export default function SubmitTab({ data }: Props) {
           </label>
           <select
             value={selectedFn}
-            onChange={(e) => { setSelectedFn(e.target.value); setAddressArg(''); setUint256Arg(''); proposeTx.reset() }}
+            onChange={(e) => { setSelectedFn(e.target.value); setAddressArg(''); setUint256Arg(''); setBytes4Arg(''); proposeTx.reset() }}
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
           >
             <option value="">Select a function...</option>
@@ -134,21 +158,23 @@ export default function SubmitTab({ data }: Props) {
 
         {fnDef && (
           <>
-            {/* Address arg */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                {fnDef.args === 'address_uint256' ? 'Strategy address' : 'Address'}
-              </label>
-              <input
-                type="text"
-                placeholder="0x..."
-                value={addressArg}
-                onChange={(e) => { setAddressArg(e.target.value); proposeTx.reset() }}
-                className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
-              />
-            </div>
+            {/* Address arg — shown for address, address_uint256, address_bytes4 */}
+            {(fnDef.args === 'address' || fnDef.args === 'address_uint256' || fnDef.args === 'address_bytes4') && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                  {fnDef.args === 'address_uint256' ? 'Strategy address' : fnDef.args === 'address_bytes4' ? 'Contract address' : 'Address'}
+                </label>
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  value={addressArg}
+                  onChange={(e) => { setAddressArg(e.target.value); proposeTx.reset() }}
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
+                />
+              </div>
+            )}
 
-            {/* uint256 arg (only for setStrategyCap) */}
+            {/* uint256 arg — for address_uint256 (setStrategyCap) */}
             {fnDef.args === 'address_uint256' && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
@@ -159,6 +185,38 @@ export default function SubmitTab({ data }: Props) {
                   placeholder="0.0"
                   value={uint256Arg}
                   onChange={(e) => { setUint256Arg(e.target.value); proposeTx.reset() }}
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
+                />
+              </div>
+            )}
+
+            {/* uint256 arg — standalone (setDeviationPps, setMaxNavStaleness, fee rates) */}
+            {fnDef.args === 'uint256' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                  Value (raw uint256)
+                </label>
+                <input
+                  type="text"
+                  placeholder="0"
+                  value={uint256Arg}
+                  onChange={(e) => { setUint256Arg(e.target.value); proposeTx.reset() }}
+                  className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
+                />
+              </div>
+            )}
+
+            {/* bytes4 arg — for address_bytes4 (enableFunction) */}
+            {fnDef.args === 'address_bytes4' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                  Function selector (bytes4)
+                </label>
+                <input
+                  type="text"
+                  placeholder="0x12345678"
+                  value={bytes4Arg}
+                  onChange={(e) => { setBytes4Arg(e.target.value); proposeTx.reset() }}
                   className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
                 />
               </div>

@@ -79,37 +79,30 @@ export const HA_BASE_ABI = [
   },
 ] as const
 
-// ABI for VaultManagerAdmin-specific admin functions (also timelocked)
+// ABI for VaultManagerAdmin-specific admin functions
 export const VAULT_MANAGER_ADMIN_ABI = [
+  // ── Timelocked address setters ─────────────────────────────────────────────
   {
     type: 'function',
     name: 'setAccessManager',
-    inputs: [{ name: 'accessManager', type: 'address', internalType: 'address' }],
+    inputs: [{ name: 'addr', type: 'address', internalType: 'address' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
     name: 'setShareToken',
-    inputs: [{ name: 'shareToken', type: 'address', internalType: 'address' }],
+    inputs: [{ name: 'addr', type: 'address', internalType: 'address' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
     name: 'setFundVault',
-    inputs: [{ name: 'fundVault', type: 'address', internalType: 'address' }],
+    inputs: [{ name: 'addr', type: 'address', internalType: 'address' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
-  {
-    type: 'function',
-    name: 'setFeeReceiver',
-    inputs: [{ name: 'feeReceiver', type: 'address', internalType: 'address' }],
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  // ── Non-timelocked setters ─────────────────────────────────────────────────
   {
     type: 'function',
     name: 'setRequestManager',
@@ -133,18 +126,19 @@ export const VAULT_MANAGER_ADMIN_ABI = [
   },
   {
     type: 'function',
-    name: 'setManagementFeeRate',
-    inputs: [{ name: 'rate', type: 'uint256', internalType: 'uint256' }],
+    name: 'setNavAggregateModel',
+    inputs: [{ name: 'addr', type: 'address', internalType: 'address' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
-    name: 'setPerformanceFeeRate',
-    inputs: [{ name: 'rate', type: 'uint256', internalType: 'uint256' }],
+    name: 'setFeeReceiver',
+    inputs: [{ name: 'receiver', type: 'address', internalType: 'address' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  // ── Timelocked uint256 setters ─────────────────────────────────────────────
   {
     type: 'function',
     name: 'setDeviationPps',
@@ -159,24 +153,67 @@ export const VAULT_MANAGER_ADMIN_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
-  // ── Emergency functions ───────────────────────────────────────────────────
   {
     type: 'function',
-    name: 'setPauseStatus',
-    inputs: [
-      { name: 'haContract', type: 'address', internalType: 'address' },
-      { name: 'isPaused', type: 'bool', internalType: 'bool' },
-    ],
+    name: 'setPerformanceFeeRate',
+    inputs: [{ name: 'rate', type: 'uint256', internalType: 'uint256' }],
     outputs: [],
     stateMutability: 'nonpayable',
   },
   {
     type: 'function',
-    name: 'setFunctionDisabled',
+    name: 'setManagementFeeRate',
+    inputs: [{ name: 'rate', type: 'uint256', internalType: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  // ── Timelocked vault management ────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'registerVault',
+    inputs: [{ name: 'vault', type: 'address', internalType: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'removeVault',
+    inputs: [{ name: 'vault', type: 'address', internalType: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  // ── Emergency: immediate (no timelock) ─────────────────────────────────────
+  {
+    type: 'function',
+    name: 'pauseContract',
+    inputs: [{ name: 'haContract', type: 'address', internalType: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'disableFunction',
     inputs: [
       { name: 'haContract', type: 'address', internalType: 'address' },
       { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
-      { name: 'disabled', type: 'bool', internalType: 'bool' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  // ── Emergency: timelocked (restore operations) ─────────────────────────────
+  {
+    type: 'function',
+    name: 'unpauseContract',
+    inputs: [{ name: 'haContract', type: 'address', internalType: 'address' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'enableFunction',
+    inputs: [
+      { name: 'haContract', type: 'address', internalType: 'address' },
+      { name: 'selector', type: 'bytes4', internalType: 'bytes4' },
     ],
     outputs: [],
     stateMutability: 'nonpayable',

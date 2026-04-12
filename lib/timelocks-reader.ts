@@ -19,7 +19,7 @@ export type TimelockFunctionDef = {
   selector: `0x${string}`
   contract: ContractTarget
   abi: readonly object[]
-  args: 'address' | 'address_uint256'
+  args: 'address' | 'address_uint256' | 'uint256' | 'address_bytes4'
 }
 
 export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
@@ -78,6 +78,102 @@ export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
     contract: 'vaultManagerAdmin',
     abi: VAULT_MANAGER_ADMIN_ABI,
     args: 'address',
+  },
+  {
+    name: 'setRequestManager',
+    signature: 'setRequestManager(address)',
+    selector: toFunctionSelector('setRequestManager(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'setPriceFeed',
+    signature: 'setPriceFeed(address)',
+    selector: toFunctionSelector('setPriceFeed(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'setFundNav',
+    signature: 'setFundNav(address)',
+    selector: toFunctionSelector('setFundNav(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'setNavAggregateModel',
+    signature: 'setNavAggregateModel(address)',
+    selector: toFunctionSelector('setNavAggregateModel(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'setDeviationPps',
+    signature: 'setDeviationPps(uint256)',
+    selector: toFunctionSelector('setDeviationPps(uint256)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'uint256',
+  },
+  {
+    name: 'setMaxNavStaleness',
+    signature: 'setMaxNavStaleness(uint256)',
+    selector: toFunctionSelector('setMaxNavStaleness(uint256)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'uint256',
+  },
+  {
+    name: 'setPerformanceFeeRate',
+    signature: 'setPerformanceFeeRate(uint256)',
+    selector: toFunctionSelector('setPerformanceFeeRate(uint256)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'uint256',
+  },
+  {
+    name: 'setManagementFeeRate',
+    signature: 'setManagementFeeRate(uint256)',
+    selector: toFunctionSelector('setManagementFeeRate(uint256)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'uint256',
+  },
+  {
+    name: 'registerVault',
+    signature: 'registerVault(address)',
+    selector: toFunctionSelector('registerVault(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'removeVault',
+    signature: 'removeVault(address)',
+    selector: toFunctionSelector('removeVault(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'unpauseContract',
+    signature: 'unpauseContract(address)',
+    selector: toFunctionSelector('unpauseContract(address)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address',
+  },
+  {
+    name: 'enableFunction',
+    signature: 'enableFunction(address,bytes4)',
+    selector: toFunctionSelector('enableFunction(address,bytes4)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address_bytes4',
   },
 ]
 

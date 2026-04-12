@@ -168,7 +168,7 @@ function EditRow({ def, data, adminSafeAddress, adminIsSafeOwner, adminHasRole, 
     : undefined
 
   const calldata = (setter && inputValue.trim()
-    ? encodeCalldata(setter.fnName, setter.argType, inputValue.trim(), setter.timelocked)
+    ? encodeCalldata(setter.fnName, setter.argType, inputValue.trim(), setter.timelocked && durationSeconds > 0)
     : null) as `0x${string}` | null
 
   function handlePropose() {
@@ -488,15 +488,15 @@ const CONTRACT_ADDRESS_ROWS: RowDef[] = [
   },
   {
     label: 'Request Manager', display: (d) => truncate(d.requestManager), isAddress: true,
-    setter: { fnName: 'setRequestManager', argType: 'address', timelocked: false, placeholder: '0x…' },
+    setter: { fnName: 'setRequestManager', argType: 'address', timelocked: true, placeholder: '0x…' },
   },
   {
     label: 'Price Feed', display: (d) => truncate(d.priceFeed), isAddress: true,
-    setter: { fnName: 'setPriceFeed', argType: 'address', timelocked: false, placeholder: '0x…' },
+    setter: { fnName: 'setPriceFeed', argType: 'address', timelocked: true, placeholder: '0x…' },
   },
   {
     label: 'Fund NAV', display: (d) => truncate(d.fundNav), isAddress: true,
-    setter: { fnName: 'setFundNav', argType: 'address', timelocked: false, placeholder: '0x…' },
+    setter: { fnName: 'setFundNav', argType: 'address', timelocked: true, placeholder: '0x…' },
   },
 ]
 
@@ -508,14 +508,14 @@ const FEE_CONFIG_ROWS: RowDef[] = [
   {
     label: 'Management Fee Rate', display: (d) => formatWadRate(d.feeConfig.managementFeeRate),
     setter: {
-      fnName: 'setManagementFeeRate', argType: 'wad_pct', timelocked: false,
+      fnName: 'setManagementFeeRate', argType: 'wad_pct', timelocked: true,
       placeholder: 'e.g. 1.5', hint: 'Enter as a percentage (max 10%). E.g. "2" = 2%',
     },
   },
   {
     label: 'Performance Fee Rate', display: (d) => formatWadRate(d.feeConfig.performanceFeeRate),
     setter: {
-      fnName: 'setPerformanceFeeRate', argType: 'wad_pct', timelocked: false,
+      fnName: 'setPerformanceFeeRate', argType: 'wad_pct', timelocked: true,
       placeholder: 'e.g. 20', hint: 'Enter as a percentage (max 50%). E.g. "20" = 20%',
     },
   },
@@ -528,14 +528,14 @@ const NAV_RISK_ROWS: RowDef[] = [
   {
     label: 'Max PPS Deviation', display: (d) => d.deviationPps === '0' ? 'No limit' : formatWadRate(d.deviationPps),
     setter: {
-      fnName: 'setDeviationPps', argType: 'wad_pct', timelocked: false,
+      fnName: 'setDeviationPps', argType: 'wad_pct', timelocked: true,
       placeholder: 'e.g. 5', hint: 'Enter as a percentage. E.g. "5" = 5% max deviation. 0 = no limit.',
     },
   },
   {
     label: 'Max NAV Staleness', display: (d) => d.maxNavStaleness === '0' ? 'Disabled' : formatDuration(Number(d.maxNavStaleness)),
     setter: {
-      fnName: 'setMaxNavStaleness', argType: 'seconds', timelocked: false,
+      fnName: 'setMaxNavStaleness', argType: 'seconds', timelocked: true,
       placeholder: 'seconds, e.g. 3600', hint: 'Maximum age of NAV update in seconds. 0 = disabled.',
     },
   },

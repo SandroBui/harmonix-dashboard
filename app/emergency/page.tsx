@@ -20,6 +20,29 @@ const TRACKED_FUNCTIONS = [
 
 export type DisabledFunctionsMap = Record<string, Record<string, boolean>>
 
+// Timelocked emergency functions — we check their durations to decide call encoding
+const UNPAUSE_SELECTOR = toFunctionSelector('unpauseContract(address)')
+const ENABLE_FN_SELECTOR = toFunctionSelector('enableFunction(address,bytes4)')
+
+export type EmergencyTimelockDurations = {
+  unpauseContract: string  // seconds as string, "0" = no timelock
+  enableFunction: string
+}
+
+export type EmergencyPendingOp = {
+  id: string
+  fnName: string       // 'unpauseContract' | 'enableFunction'
+  selector: string
+  data: string         // raw calldata hex
+  executableAt: string // unix timestamp as string
+  isReady: boolean
+}
+
+const EMERGENCY_SELECTORS: Record<string, string> = {
+  [UNPAUSE_SELECTOR.toLowerCase()]: 'unpauseContract',
+  [ENABLE_FN_SELECTOR.toLowerCase()]: 'enableFunction',
+}
+
 export default async function EmergencyPage({
   searchParams,
 }: {
@@ -35,6 +58,8 @@ export default async function EmergencyPage({
   let fundVaultAddress = ''
   let fundVaultPaused = false
   let disabledFunctions: DisabledFunctionsMap = {}
+  let timelockDurations: EmergencyTimelockDurations = { unpauseContract: '0', enableFunction: '0' }
+  let pendingOps: EmergencyPendingOp[] = []
   let error = ''
 
   try {
@@ -109,6 +134,52 @@ export default async function EmergencyPage({
         disabledFunctions[v.vault] = vaultMap
       }
     }
+
+    // Read timelock durations for unpauseContract and enableFunction
+    const [unpauseDuration, enableFnDuration] = await Promise.all([
+      publicClient.readContract({
+        address: haVaultReaderAddress,
+        abi: HA_VAULT_READER_ABI,
+        functionName: 'getTimelockDuration',
+        args: [adminFacet, UNPAUSE_SELECTOR],
+      }) as Promise<bigint>,
+      publicClient.readContract({
+        address: haVaultReaderAddress,
+        abi: HA_VAULT_READER_ABI,
+        functionName: 'getTimelockDuration',
+        args: [adminFacet, ENABLE_FN_SELECTOR],
+      }) as Promise<bigint>,
+    ])
+    timelockDurations = {
+      unpauseContract: unpauseDuration.toString(),
+      enableFunction: enableFnDuration.toString(),
+    }
+
+    // Fetch pending timelock ops for VaultManagerAdmin, filter to emergency-related
+    type RawPendingOp = {
+      data: `0x${string}`
+      selector: `0x${string}`
+      executableAt: bigint
+      isReady: boolean
+    }
+
+    const rawPending = await publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'getContractPending',
+      args: [adminFacet],
+    }) as readonly RawPendingOp[]
+
+    pendingOps = rawPending
+      .filter((op) => EMERGENCY_SELECTORS[op.selector.toLowerCase()])
+      .map((op, i) => ({
+        id: `${adminFacet}-${op.selector}-${i}`,
+        fnName: EMERGENCY_SELECTORS[op.selector.toLowerCase()],
+        selector: op.selector,
+        data: op.data,
+        executableAt: op.executableAt.toString(),
+        isReady: op.isReady,
+      }))
   } catch (err) {
     error = err instanceof Error ? err.message : String(err)
   }
@@ -130,6 +201,8 @@ export default async function EmergencyPage({
           fundVaultAddress={fundVaultAddress}
           fundVaultPaused={fundVaultPaused}
           disabledFunctions={disabledFunctions}
+          timelockDurations={timelockDurations}
+          pendingOps={pendingOps}
         />
       ) : null}
     </main>

@@ -237,20 +237,44 @@ export function summarizeDecodedData(
   }
 
   // ── Emergency methods ───────────────────────────────────────────────
-  if (method === 'setPauseStatus') {
+  if (method === 'pauseContract') {
     const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
-    const isPaused = parameters.find((p) => p.name === 'isPaused')?.value
-    const action = isPaused === 'true' ? 'Pause' : 'Unpause'
-    return `${action} contract ${truncate(contract)}`
+    return `Pause contract ${truncate(contract)}`
   }
 
-  if (method === 'setFunctionDisabled') {
+  if (method === 'unpauseContract') {
+    const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
+    return `Unpause contract ${truncate(contract)}`
+  }
+
+  if (method === 'disableFunction') {
     const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
     const selector = parameters.find((p) => p.name === 'selector')?.value ?? ''
-    const disabled = parameters.find((p) => p.name === 'disabled')?.value
     const fnName = KNOWN_SELECTORS[selector.toLowerCase()] ?? selector
-    const action = disabled === 'true' ? 'Disable' : 'Enable'
-    return `${action} ${fnName}() on ${truncate(contract)}`
+    return `Disable ${fnName}() on ${truncate(contract)}`
+  }
+
+  if (method === 'enableFunction') {
+    const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
+    const selector = parameters.find((p) => p.name === 'selector')?.value ?? ''
+    const fnName = KNOWN_SELECTORS[selector.toLowerCase()] ?? selector
+    return `Enable ${fnName}() on ${truncate(contract)}`
+  }
+
+  // ── VaultManagerAdmin setters ────────────────────────────────────────
+  if (method === 'setNavAggregateModel') {
+    const addr = parameters.find((p) => p.name === 'addr')?.value ?? ''
+    return `Set NavAggregateModel → ${truncate(addr)}`
+  }
+
+  if (method === 'registerVault') {
+    const vault = parameters.find((p) => p.name === 'vault')?.value ?? ''
+    return `Register vault ${truncate(vault)}`
+  }
+
+  if (method === 'removeVault') {
+    const vault = parameters.find((p) => p.name === 'vault')?.value ?? ''
+    return `Remove vault ${truncate(vault)}`
   }
 
   // Generic fallback
