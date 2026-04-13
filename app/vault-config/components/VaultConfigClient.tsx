@@ -142,8 +142,18 @@ type EditRowProps = {
 function EditRow({ def, data, adminSafeAddress, adminIsSafeOwner, adminHasRole, timelockSafeAddress, timelockIsSafeOwner, timelockHasRole }: EditRowProps) {
   const { isConnected, chainId } = useAccount()
 
-  // Use timelock_proposer role for timelocked rows, admin for the rest
-  const isTimelocked = def.setter?.timelocked ?? false
+  const { setter } = def
+
+  // Compute duration first so we can decide whether timelock is actually active
+  const timelockFnDef = setter?.timelocked
+    ? TIMELOCKED_FUNCTIONS.find((f) => f.name === setter.fnName)
+    : null
+  const durationSeconds = timelockFnDef
+    ? Number(data.timelockDurations[setter!.fnName] ?? '0')
+    : 0
+
+  // Use timelock_proposer role only when the function is timelocked AND has a duration > 0
+  const isTimelocked = (setter?.timelocked ?? false) && durationSeconds > 0
   const safeAddress = isTimelocked ? timelockSafeAddress : adminSafeAddress
   const isSafeOwner = isTimelocked ? timelockIsSafeOwner : adminIsSafeOwner
   const hasRole = isTimelocked ? timelockHasRole : adminHasRole
@@ -153,22 +163,14 @@ function EditRow({ def, data, adminSafeAddress, adminIsSafeOwner, adminHasRole, 
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState('')
 
-  const { setter } = def
   const isWrongChain = isConnected && chainId !== 999
-
-  const timelockFnDef = setter?.timelocked
-    ? TIMELOCKED_FUNCTIONS.find((f) => f.name === setter.fnName)
-    : null
-  const durationSeconds = timelockFnDef
-    ? Number(data.timelockDurations[setter!.fnName] ?? '0')
-    : 0
 
   const pendingOp = setter?.timelocked
     ? data.pendingOps.find((op) => op.fnName === setter.fnName)
     : undefined
 
   const calldata = (setter && inputValue.trim()
-    ? encodeCalldata(setter.fnName, setter.argType, inputValue.trim(), setter.timelocked && durationSeconds > 0)
+    ? encodeCalldata(setter.fnName, setter.argType, inputValue.trim(), isTimelocked)
     : null) as `0x${string}` | null
 
   function handlePropose() {
