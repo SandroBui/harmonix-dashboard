@@ -16,12 +16,21 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
       timelockProposer: '0xfBb13b8b20375c4F95900A8C3d1fB72685Cf0c9F',
     },
   },
-  // Add new vault groups here:
-  // {
-  //   slug: 'btc-vault',
-  //   name: 'BTC Vault',
-  //   ...
-  // },
+  {
+    slug: 'staging',
+    name: 'Staging Vault',
+    description: 'Staging Harmonix vault on HyperEVM for mock token',
+    chainId: 999,
+    haVaultReaderAddress: '0x66341e783529c0837Ab16791E031E109d9046fE9',
+    safe: {
+      default: '0x92493f39dbC498fd7347781eF956d21d4DaCCE75',
+      operator: '0xe80EEEEa4bB2879A38548aC1087DdB0F453A1e8F',
+      curator: '0x8284af16b897C089FCf2DeF97337F0d32C4C7b1a',
+      priceUpdater: '0x00a0af225B26507d3B89Fd09c758913Ac0C431A3',
+      admin: '0x92493f39dbC498fd7347781eF956d21d4DaCCE75',
+      timelockProposer: '0x6F475D70147105fabdf987F8CaF725d12aF48157',
+    },
+  },
 ]
 
 /** The default vault group (first in the list) */
