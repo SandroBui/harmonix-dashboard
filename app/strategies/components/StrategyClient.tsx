@@ -55,7 +55,7 @@ export default function StrategyClient({ data }: Props) {
   const { data: assetMetadata } = useAssetMetadata()
 
   // Curator Safe — for direct proposals and execute
-  const { safeAddress, canPropose, isSafeOwner, hasRole } = useRoleCheck('curator')
+  const { safeAddress, isSafeOwner, hasRole } = useRoleCheck('curator')
   const proposeTx = useProposeSafeTransaction(safeAddress)
 
   // Timelock Proposer Safe — for timelock submit
@@ -143,6 +143,7 @@ export default function StrategyClient({ data }: Props) {
   }
 
   const needsAmount = activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'deallocate'
+  const needsAssetSelect = needsAmount || activeAction === 'removeStrategy'
   const needsStrategySelect = activeAction === 'removeStrategy' || activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'deallocate'
   const needsStrategyInput = activeAction === 'addStrategy'
 
@@ -241,15 +242,21 @@ export default function StrategyClient({ data }: Props) {
           {/* Form */}
           {activeAction && (
             <div className="space-y-4">
-              {/* Asset selector (for context on decimals) */}
-              {needsAmount && (
+              {/* Asset selector */}
+              {needsAssetSelect && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                    Asset context (for decimals)
+                    {needsAmount ? 'Asset context (for decimals)' : 'Asset'}
                   </label>
                   <select
                     value={selectedAsset}
-                    onChange={(e) => setSelectedAsset(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedAsset(e.target.value)
+                      setStrategyInput('')
+                      setAmountInput('')
+                      proposeTx.reset()
+                      timelockProposeTx.reset()
+                    }}
                     className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
                   >
                     {data.assets.map((a) => (
