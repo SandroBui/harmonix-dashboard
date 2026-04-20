@@ -47,7 +47,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
   const { data: assetMetadata } = useAssetMetadata()
 
   // Fetch Safe info for the operator role
-  const { safeInfo: operatorSafeInfo, safeAddress: operatorSafeAddress } = useRoleCheck('operator')
+  const { safeInfo: operatorSafeInfo, hasRole: operatorHasRole } = useRoleCheck('operator')
   const safeInfo = operatorSafeInfo as SafeInfo | undefined
   const [status, setStatus] = useState<StatusFilter>('all')
   const [startDate, setStartDate] = useState('')
@@ -295,6 +295,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
           selected={selectedRows}
           vaultAssetMap={vaultAssetMap}
           safeInfo={safeInfo}
+          hasOperatorRole={operatorHasRole}
           onSuccess={handleFulfillSuccess}
         />
       )}
@@ -302,6 +303,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
         <CancelPanel
           selected={selectedRows}
           safeInfo={safeInfo}
+          hasOperatorRole={operatorHasRole}
           onSuccess={handleFulfillSuccess}
         />
       )}

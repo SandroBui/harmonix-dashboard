@@ -14,10 +14,11 @@ import type { Withdrawal } from '@/lib/vault-reader'
 type Props = {
   selected: Withdrawal[]
   safeInfo: SafeInfo | undefined
+  hasOperatorRole: boolean
   onSuccess: () => void
 }
 
-export default function CancelPanel({ selected, safeInfo, onSuccess }: Props) {
+export default function CancelPanel({ selected, safeInfo, hasOperatorRole, onSuccess }: Props) {
   const { address, isConnected, chainId } = useAccount()
   const config = useVaultConfig()
   const { data: resolved } = useResolvedRoleSafes()
@@ -67,6 +68,10 @@ export default function CancelPanel({ selected, safeInfo, onSuccess }: Props) {
     cancelClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
   } else if (!isOwner) {
     cancelLabel = 'Not a Safe owner'
+    cancelDisabled = true
+    cancelClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!hasOperatorRole) {
+    cancelLabel = 'Safe lacks OPERATOR_ROLE'
     cancelDisabled = true
     cancelClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
   } else if (cancelTx.isPending) {

@@ -16,6 +16,7 @@ type Props = {
   selected: Withdrawal[]
   vaultAssetMap: Record<string, string>
   safeInfo: SafeInfo | undefined
+  hasOperatorRole: boolean
   onSuccess: () => void
 }
 
@@ -30,7 +31,7 @@ function formatUnits(value: string, decimals: number): string {
   return `${whole.toLocaleString()}.${fracStr}`
 }
 
-export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, onSuccess }: Props) {
+export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, hasOperatorRole, onSuccess }: Props) {
   const { address, isConnected, chainId } = useAccount()
   const config = useVaultConfig()
   const { data: assetMetadata } = useAssetMetadata()
@@ -85,6 +86,10 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, onSucc
     safeClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
   } else if (!isOwner) {
     safeLabel = 'Not a Safe owner'
+    safeDisabled = true
+    safeClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!hasOperatorRole) {
+    safeLabel = 'Safe lacks OPERATOR_ROLE'
     safeDisabled = true
     safeClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
   } else if (proposeTx.isPending) {
