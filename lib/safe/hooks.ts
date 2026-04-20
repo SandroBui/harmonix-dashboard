@@ -13,7 +13,63 @@ import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI } from '@/lib/contracts'
 import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import type { PendingSafeTx, SafeInfo } from './types'
+import type { PendingSafeTx, SafeInfo, FulfillPrecheck } from './types'
+
+const ERC20_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const maybeStatus = (error as { status?: unknown }).status
+  if (typeof maybeStatus === 'number') return maybeStatus
+
+  const response = (error as { response?: { status?: unknown } }).response
+  if (response && typeof response.status === 'number') return response.status
+
+  const cause = (error as { cause?: { status?: unknown } }).cause
+  if (cause && typeof cause.status === 'number') return cause.status
+
+  const message = (error as { message?: unknown }).message
+  if (typeof message === 'string') {
+    const match = message.match(/\b(\d{3})\b/)
+    if (match) return Number(match[1])
+  }
+
+  return undefined
+}
+
+function isRateLimitedError(error: unknown): boolean {
+  if (getErrorStatus(error) === 429) return true
+  const message = typeof (error as { message?: unknown })?.message === 'string'
+    ? ((error as { message: string }).message).toLowerCase()
+    : ''
+  return message.includes('429') || message.includes('too many requests') || message.includes('rate limit')
+}
+
+function getVaultAssetMapKey(vaultAssetMap?: Record<string, string>): string {
+  if (!vaultAssetMap) return ''
+  return Object.entries(vaultAssetMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([vault, asset]) => `${vault}:${asset}`)
+    .join('|')
+}
+
+function getAssetMetadataKey(
+  assetMetadata?: Record<string, { symbol: string; decimals: number }>,
+): string {
+  if (!assetMetadata) return ''
+  return Object.entries(assetMetadata)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([asset, meta]) => `${asset}:${meta.symbol}:${meta.decimals}`)
+    .join('|')
+}
 
 async function detectAddressType(address: `0x${string}`): Promise<'EOA' | 'Safe' | 'Contract'> {
   const publicClient = getPublicClient()
@@ -132,7 +188,7 @@ export function useSafeInfo(safeAddress?: `0x${string}`) {
         nonce: info.nonce,
       }
     },
-    staleTime: 60_000,
+    staleTime: 300_000,
     enabled: Boolean(addr && addr !== '0x'),
   })
 }
@@ -143,39 +199,118 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
   const config = useVaultConfig()
   const { data: assetMetadata } = useAssetMetadata()
   const addr = safeAddress ?? getDefaultSafeAddress(config)
+  const vaultAssetMapKey = getVaultAssetMapKey(vaultAssetMap)
+  const assetMetadataKey = getAssetMetadataKey(assetMetadata)
   return useQuery<PendingSafeTx[]>({
-    queryKey: ['safe', 'pendingTxs', addr, assetMetadata],
+    queryKey: ['safe', 'pendingTxs', addr, config.haVaultReaderAddress, vaultAssetMapKey, assetMetadataKey],
     queryFn: async () => {
       const apiKit = getApiKit()
       const response = await apiKit.getPendingTransactions(addr)
-
-      return Promise.all(
-        (response.results as SafeMultisigTransactionResponse[]).map(async (tx) => {
-          const dataDecoded = tx.data
-            ? await decodeTransactionData(tx.data, tx.to)
-            : null
-          const confirmationsCount = tx.confirmations?.length ?? 0
-          return {
-            safeTxHash: tx.safeTxHash,
-            to: tx.to,
-            value: tx.value ?? '0',
-            data: tx.data ?? null,
-            operation: tx.operation ?? 0,
-            nonce: tx.nonce,
-            submissionDate: tx.modified ?? tx.submissionDate,
-            confirmationsRequired: tx.confirmationsRequired,
-            confirmations: tx.confirmations ?? [],
-            confirmationsCount,
-            isExecutable: confirmationsCount >= tx.confirmationsRequired,
-            dataDecoded,
-            summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata ?? {}),
-          } satisfies PendingSafeTx
-        }),
+      const txs = response.results as SafeMultisigTransactionResponse[]
+      const decodedResults = await Promise.all(
+        txs.map(async (tx) => ({
+          tx,
+          dataDecoded: tx.data ? await decodeTransactionData(tx.data, tx.to) : null,
+        })),
       )
+
+      const publicClient = getPublicClient()
+      let fundVaultAddress: `0x${string}` | null = null
+      const fulfillInfo = new Map<string, { totalAmount: bigint; assetAddress: `0x${string}` }>()
+      const neededAssets = new Set<`0x${string}`>()
+
+      for (const { tx, dataDecoded } of decodedResults) {
+        if (dataDecoded?.method !== 'fulfillRedeem') continue
+        const totalAmountParam = dataDecoded.parameters.find((p) => p.name === 'totalAmount')
+        const tokenAddr = vaultAssetMap?.[tx.to.toLowerCase()]
+        if (!totalAmountParam || !tokenAddr) continue
+        try {
+          const totalAmount = BigInt(totalAmountParam.value)
+          const normalizedAsset = getAddress(tokenAddr) as `0x${string}`
+          fulfillInfo.set(tx.safeTxHash, { totalAmount, assetAddress: normalizedAsset })
+          neededAssets.add(normalizedAsset)
+        } catch {
+          // ignore malformed fulfill params and continue rendering transactions
+        }
+      }
+
+      const fundVaultBalances = new Map<string, bigint>()
+      if (neededAssets.size > 0) {
+        try {
+          fundVaultAddress = await publicClient.readContract({
+            address: config.haVaultReaderAddress,
+            abi: HA_VAULT_READER_ABI,
+            functionName: 'getFundVault',
+          }) as `0x${string}`
+
+          await Promise.all(
+            Array.from(neededAssets).map(async (assetAddress) => {
+              const balance = await publicClient.readContract({
+                address: assetAddress,
+                abi: ERC20_ABI,
+                functionName: 'balanceOf',
+                args: [fundVaultAddress as `0x${string}`],
+              }) as bigint
+              fundVaultBalances.set(assetAddress.toLowerCase(), balance)
+            }),
+          )
+        } catch {
+          // fail-soft: precheck metadata omitted if on-chain reads fail
+        }
+      }
+
+      return decodedResults.map(({ tx, dataDecoded }) => {
+        const confirmationsCount = tx.confirmations?.length ?? 0
+        let fulfillPrecheck: FulfillPrecheck | undefined
+
+        const pre = fulfillInfo.get(tx.safeTxHash)
+        if (pre && fundVaultAddress) {
+          const meta = (assetMetadata ?? {})[pre.assetAddress.toLowerCase()]
+          const decimals = meta?.decimals ?? 18
+          const symbol = meta?.symbol ?? pre.assetAddress.slice(0, 10)
+          const fundVaultBalance = fundVaultBalances.get(pre.assetAddress.toLowerCase())
+          if (fundVaultBalance !== undefined) {
+            const isInsufficient = fundVaultBalance < pre.totalAmount
+            const shortfall = isInsufficient ? pre.totalAmount - fundVaultBalance : 0n
+            fulfillPrecheck = {
+              fundVaultAddress,
+              assetAddress: pre.assetAddress.toLowerCase(),
+              symbol,
+              decimals,
+              requiredAmount: pre.totalAmount.toString(),
+              fundVaultBalance: fundVaultBalance.toString(),
+              shortfall: shortfall.toString(),
+              isInsufficient,
+            }
+          }
+        }
+
+        return {
+          safeTxHash: tx.safeTxHash,
+          to: tx.to,
+          value: tx.value ?? '0',
+          data: tx.data ?? null,
+          operation: tx.operation ?? 0,
+          nonce: tx.nonce,
+          submissionDate: tx.modified ?? tx.submissionDate,
+          confirmationsRequired: tx.confirmationsRequired,
+          confirmations: tx.confirmations ?? [],
+          confirmationsCount,
+          isExecutable: confirmationsCount >= tx.confirmationsRequired,
+          dataDecoded,
+          summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata ?? {}),
+          fulfillPrecheck,
+        } satisfies PendingSafeTx
+      })
     },
-    refetchInterval: 15_000,
-    staleTime: 10_000,
+    refetchInterval: (query) => {
+      if (isRateLimitedError(query.state.error)) return 90_000
+      const hasPending = (query.state.data?.length ?? 0) > 0
+      return hasPending ? 30_000 : 60_000
+    },
+    staleTime: 30_000,
     enabled: Boolean(addr && addr !== '0x'),
+    refetchIntervalInBackground: false,
   })
 }
 

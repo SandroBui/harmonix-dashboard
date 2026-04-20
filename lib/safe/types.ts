@@ -18,6 +18,19 @@ export type PendingSafeTx = {
   dataDecoded: DataDecoded | null
   /** Human-readable one-line summary, e.g. "Fulfill 3 withdrawal(s) — 1,000 USDT" */
   summary: string
+  /** Optional pre-check metadata for fulfillRedeem transactions */
+  fulfillPrecheck?: FulfillPrecheck
+}
+
+export type FulfillPrecheck = {
+  fundVaultAddress: string
+  assetAddress: string
+  symbol: string
+  decimals: number
+  requiredAmount: string
+  fundVaultBalance: string
+  shortfall: string
+  isInsufficient: boolean
 }
 
 /** Subset of the Safe Transaction Service decoded data shape */

@@ -1,6 +1,7 @@
 'use client'
 
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
+import { formatTokenAmount } from '@/lib/format'
 import DecodedCalldata from './DecodedCalldata'
 import SafeTxActions from './SafeTxActions'
 
@@ -20,6 +21,21 @@ export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
     <div className="space-y-4 border-t border-neutral-200 px-4 py-4 dark:border-neutral-700">
       {/* Decoded calldata */}
       <DecodedCalldata decoded={tx.dataDecoded} rawData={tx.data} to={tx.to} />
+
+      {tx.fulfillPrecheck && (
+        <div className={`rounded-md border px-3 py-2 text-sm ${tx.fulfillPrecheck.isInsufficient
+          ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/20 dark:text-red-300'
+          : 'border-neutral-200 bg-neutral-50 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200'}`}>
+          <p>
+            FundVault balance: {formatTokenAmount(tx.fulfillPrecheck.fundVaultBalance, tx.fulfillPrecheck.decimals, 4)} {tx.fulfillPrecheck.symbol}
+          </p>
+          {tx.fulfillPrecheck.isInsufficient && (
+            <p className="mt-1">
+              Requires {formatTokenAmount(tx.fulfillPrecheck.requiredAmount, tx.fulfillPrecheck.decimals, 4)} {tx.fulfillPrecheck.symbol}, short by {formatTokenAmount(tx.fulfillPrecheck.shortfall, tx.fulfillPrecheck.decimals, 4)} {tx.fulfillPrecheck.symbol}.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Metadata grid */}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
