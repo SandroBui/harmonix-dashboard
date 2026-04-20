@@ -1,9 +1,15 @@
 import { decodeFunctionData, toFunctionSelector } from 'viem'
-import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
+import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI } from '@/lib/abis'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
+import { ROLE_HASHES, ROLE_LABELS } from './roles'
 import { getApiKit } from './api-kit'
 import type { DataDecoded, DecodedParam } from './types'
+
+// Reverse map: role hash → label
+const ROLE_HASH_TO_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(ROLE_HASHES).map(([key, hash]) => [hash.toLowerCase(), ROLE_LABELS[key as keyof typeof ROLE_LABELS]])
+)
 
 // Map known bytes4 selectors to human-readable function names (VaultAsset)
 const KNOWN_SELECTORS: Record<string, string> = {}
@@ -54,6 +60,7 @@ export async function decodeTransactionData(
     FUND_VAULT_ABI,
     HA_BASE_ABI,
     VAULT_MANAGER_ADMIN_ABI,
+    ACCESS_MANAGER_ABI,
     ERC20_ABI,
   ] as const
 
@@ -275,6 +282,34 @@ export function summarizeDecodedData(
   if (method === 'removeVault') {
     const vault = parameters.find((p) => p.name === 'vault')?.value ?? ''
     return `Remove vault ${truncate(vault)}`
+  }
+
+  // ── AccessManager role management ──────────────────────────────────────
+  if (method === 'grantRole') {
+    const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
+    const account = parameters.find((p) => p.name === 'account')?.value ?? ''
+    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    return `Grant or execute pending ${roleLabel} for ${truncate(account)}`
+  }
+
+  if (method === 'revokeRole') {
+    const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
+    const account = parameters.find((p) => p.name === 'account')?.value ?? ''
+    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    return `Revoke ${roleLabel} role from ${truncate(account)}`
+  }
+
+  if (method === 'setRoleTimelock') {
+    const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
+    const delay = Number(parameters.find((p) => p.name === 'delay')?.value ?? '0')
+    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    return `Set ${roleLabel} timelock to ${formatDuration(delay)}`
+  }
+
+  if (method === 'cancelPendingGrant') {
+    const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
+    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    return `Cancel pending ${roleLabel} grant`
   }
 
   // Generic fallback

@@ -2,10 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useAccount } from 'wagmi'
-import { encodeFunctionData, getAddress } from 'viem'
+import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { getAddress } from 'viem'
 import { HA_BASE_ABI } from '@/lib/abis'
-import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
+import { useRoleCheck } from '@/lib/safe/hooks'
 import type { PendingOperation, TimelockPageData } from '@/lib/timelocks-reader'
 
 type Props = {
@@ -66,20 +66,25 @@ export default function RevokeTab({ data }: Props) {
 
 function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
   const { isConnected, chainId } = useAccount()
-  const { safeAddress, isSafeOwner, hasRole } = useRoleCheck('admin')
-  const proposeTx = useProposeSafeTransaction(safeAddress)
+  const { hasRole: sentinelHasRole } = useRoleCheck('sentinel')
+
+  const { writeContract, data: txHash, isPending, isSuccess, isError, error, reset } = useWriteContract()
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash: txHash,
+    query: { enabled: Boolean(txHash) },
+  })
 
   const isWrongChain = isConnected && chainId !== 999
   const contractAddress = getAddress(op.contractAddress)
 
   function handleRevoke() {
-    proposeTx.reset()
-    const calldata = encodeFunctionData({
+    reset()
+    writeContract({
+      address: contractAddress as `0x${string}`,
       abi: HA_BASE_ABI,
       functionName: 'revoke',
       args: [op.data as `0x${string}`],
     })
-    proposeTx.mutate({ to: contractAddress as `0x${string}`, data: calldata })
   }
 
   let btnLabel: string
@@ -92,18 +97,15 @@ function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
   } else if (isWrongChain) {
     btnLabel = 'Wrong network'; btnDisabled = true
     btnClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
-  } else if (!isSafeOwner) {
-    btnLabel = 'Not owner'; btnDisabled = true
+  } else if (!sentinelHasRole) {
+    btnLabel = 'No SENTINEL_ROLE'; btnDisabled = true
     btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (!hasRole) {
-    btnLabel = 'No role'; btnDisabled = true
-    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (proposeTx.isPending) {
+  } else if (isPending || isConfirming) {
     btnLabel = 'Confirm...'; btnDisabled = true
-  } else if (proposeTx.isSuccess) {
-    btnLabel = 'Proposed'; btnDisabled = true
+  } else if (isSuccess) {
+    btnLabel = 'Submitted'; btnDisabled = true
     btnClass = 'bg-green-600 text-white cursor-not-allowed'
-  } else if (proposeTx.isError) {
+  } else if (isError) {
     btnLabel = 'Retry'
     btnClass = 'bg-red-600 text-white hover:bg-red-700'
   } else {
@@ -136,14 +138,14 @@ function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {proposeTx.isSuccess && (
+          {isSuccess && (
             <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
               View
             </Link>
           )}
-          {proposeTx.error && (
-            <span className="max-w-[200px] truncate text-xs text-red-600 cursor-help" title={proposeTx.error.message}>
-              {proposeTx.error.message}
+          {isError && (
+            <span className="max-w-[200px] truncate text-xs text-red-600 cursor-help" title={error?.message}>
+              {error?.message}
             </span>
           )}
           <button
@@ -171,28 +173,32 @@ function ManualRevokeForm({
   onTargetChange: (v: string) => void
 }) {
   const { isConnected, chainId } = useAccount()
-  const { safeAddress, isSafeOwner, hasRole } = useRoleCheck('admin')
-  const proposeTx = useProposeSafeTransaction(safeAddress)
+  const { hasRole: sentinelHasRole } = useRoleCheck('sentinel')
+  const { writeContract, data: txHash, isPending, isSuccess, isError, error, reset } = useWriteContract()
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash: txHash,
+    query: { enabled: Boolean(txHash) },
+  })
 
   const isWrongChain = isConnected && chainId !== 999
 
-  function handlePropose() {
+  function handleRevoke() {
     if (!data.trim() || !target.trim()) return
     try {
       const contractAddress = getAddress(target.trim())
-      proposeTx.reset()
-      const calldata = encodeFunctionData({
+      reset()
+      writeContract({
+        address: contractAddress as `0x${string}`,
         abi: HA_BASE_ABI,
         functionName: 'revoke',
         args: [data.trim() as `0x${string}`],
       })
-      proposeTx.mutate({ to: contractAddress as `0x${string}`, data: calldata })
     } catch {
       // invalid address — let user fix it
     }
   }
 
-  const canPropose = Boolean(data.trim() && target.trim())
+  const canRevoke = Boolean(data.trim() && target.trim())
 
   let btnLabel: string
   let btnDisabled = false
@@ -204,22 +210,19 @@ function ManualRevokeForm({
   } else if (isWrongChain) {
     btnLabel = 'Wrong network'; btnDisabled = true
     btnClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
-  } else if (!isSafeOwner) {
-    btnLabel = 'Not a Safe owner'; btnDisabled = true
+  } else if (!sentinelHasRole) {
+    btnLabel = 'No SENTINEL_ROLE'; btnDisabled = true
     btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (!hasRole) {
-    btnLabel = 'Safe lacks DEFAULT_ADMIN_ROLE'; btnDisabled = true
-    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (proposeTx.isPending) {
+  } else if (isPending || isConfirming) {
     btnLabel = 'Confirm in wallet...'; btnDisabled = true
-  } else if (proposeTx.isSuccess) {
-    btnLabel = 'Proposed'; btnDisabled = true
+  } else if (isSuccess) {
+    btnLabel = 'Submitted'; btnDisabled = true
     btnClass = 'bg-green-600 text-white cursor-not-allowed'
-  } else if (proposeTx.isError) {
+  } else if (isError) {
     btnLabel = 'Failed — Retry'
     btnClass = 'bg-red-600 text-white hover:bg-red-700'
   } else {
-    btnLabel = 'Propose Revoke via Safe'
+    btnLabel = 'Revoke'
   }
 
   return (
@@ -232,7 +235,7 @@ function ManualRevokeForm({
           type="text"
           placeholder="0x..."
           value={target}
-          onChange={(e) => { onTargetChange(e.target.value); proposeTx.reset() }}
+          onChange={(e) => { onTargetChange(e.target.value); reset() }}
           className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
         />
       </div>
@@ -244,7 +247,7 @@ function ManualRevokeForm({
         <textarea
           placeholder="0x..."
           value={data}
-          onChange={(e) => { onDataChange(e.target.value); proposeTx.reset() }}
+          onChange={(e) => { onDataChange(e.target.value); reset() }}
           rows={3}
           className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
         />
@@ -252,10 +255,10 @@ function ManualRevokeForm({
 
       <div className="flex items-center gap-3">
         <button
-          onClick={handlePropose}
-          disabled={btnDisabled || !canPropose}
+          onClick={handleRevoke}
+          disabled={btnDisabled || !canRevoke}
           className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-            !canPropose
+            !canRevoke
               ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
               : btnClass
           }`}
@@ -263,15 +266,15 @@ function ManualRevokeForm({
           {btnLabel}
         </button>
 
-        {proposeTx.isSuccess && (
+        {isSuccess && (
           <Link href="/safe-transactions" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
             View pending transactions
           </Link>
         )}
 
-        {proposeTx.error && (
-          <span className="max-w-xs truncate text-xs text-red-600 dark:text-red-400 cursor-help" title={proposeTx.error.message}>
-            {proposeTx.error.message}
+        {isError && (
+          <span className="max-w-xs truncate text-xs text-red-600 dark:text-red-400 cursor-help" title={error?.message}>
+            {error?.message}
           </span>
         )}
       </div>

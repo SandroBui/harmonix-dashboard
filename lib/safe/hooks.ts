@@ -5,14 +5,115 @@ import { useAccount, useReadContract } from 'wagmi'
 import { getAddress } from 'viem'
 import type { SafeMultisigTransactionResponse } from '@safe-global/types-kit'
 import { getApiKit } from './api-kit'
-import { getDefaultSafeAddress, getSafeAddressForRole, ROLE_HASHES } from './roles'
-import type { RoleType } from './roles'
+import { DYNAMIC_SAFE_ROLES, getDefaultSafeAddress, getResolvedSafeAddressForRole, ROLE_HASHES } from './roles'
+import type { RoleType, ResolvedRoleSafes } from './roles'
 import { initProtocolKit } from './protocol-kit'
 import { decodeTransactionData, summarizeDecodedData } from './decoder'
-import { HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import type { PendingSafeTx, SafeInfo } from './types'
+
+async function detectAddressType(address: `0x${string}`): Promise<'EOA' | 'Safe' | 'Contract'> {
+  const publicClient = getPublicClient()
+  const bytecode = await publicClient.getBytecode({ address })
+  if (!bytecode || bytecode === '0x') return 'EOA'
+
+  const SAFE_ABI = [
+    {
+      type: 'function',
+      name: 'getThreshold',
+      inputs: [],
+      outputs: [{ type: 'uint256' }],
+      stateMutability: 'view',
+    },
+    {
+      type: 'function',
+      name: 'getOwners',
+      inputs: [],
+      outputs: [{ type: 'address[]' }],
+      stateMutability: 'view',
+    },
+  ] as const
+
+  try {
+    await Promise.all([
+      publicClient.readContract({ address, abi: SAFE_ABI, functionName: 'getThreshold' }),
+      publicClient.readContract({ address, abi: SAFE_ABI, functionName: 'getOwners' }),
+    ])
+    return 'Safe'
+  } catch {
+    return 'Contract'
+  }
+}
+
+export function useResolvedRoleSafes() {
+  const config = useVaultConfig()
+
+  return useQuery<{ resolvedSafes: ResolvedRoleSafes; sentinelEoas: `0x${string}`[] }>({
+    queryKey: ['safe', 'resolvedRoleSafes', config.haVaultReaderAddress],
+    queryFn: async () => {
+      const publicClient = getPublicClient()
+
+      const accessManagerAddress = await publicClient.readContract({
+        address: config.haVaultReaderAddress,
+        abi: HA_VAULT_READER_ABI,
+        functionName: 'getAccessManager',
+      }) as `0x${string}`
+
+      const resolvedSafes: ResolvedRoleSafes = {}
+
+      for (const role of DYNAMIC_SAFE_ROLES) {
+        const roleHash = ROLE_HASHES[role]
+        const count = await publicClient.readContract({
+          address: accessManagerAddress,
+          abi: ACCESS_MANAGER_ABI,
+          functionName: 'getRoleMemberCount',
+          args: [roleHash],
+        }) as bigint
+
+        for (let i = 0; i < Number(count); i += 1) {
+          const member = await publicClient.readContract({
+            address: accessManagerAddress,
+            abi: ACCESS_MANAGER_ABI,
+            functionName: 'getRoleMember',
+            args: [roleHash, BigInt(i)],
+          }) as `0x${string}`
+
+          const type = await detectAddressType(member)
+          if (type === 'Safe') {
+            resolvedSafes[role] = getAddress(member) as `0x${string}`
+            break
+          }
+        }
+      }
+
+      const sentinelEoas: `0x${string}`[] = []
+      const sentinelCount = await publicClient.readContract({
+        address: accessManagerAddress,
+        abi: ACCESS_MANAGER_ABI,
+        functionName: 'getRoleMemberCount',
+        args: [ROLE_HASHES.sentinel],
+      }) as bigint
+
+      for (let i = 0; i < Number(sentinelCount); i += 1) {
+        const member = await publicClient.readContract({
+          address: accessManagerAddress,
+          abi: ACCESS_MANAGER_ABI,
+          functionName: 'getRoleMember',
+          args: [ROLE_HASHES.sentinel, BigInt(i)],
+        }) as `0x${string}`
+
+        const type = await detectAddressType(member)
+        if (type === 'EOA') sentinelEoas.push(getAddress(member) as `0x${string}`)
+      }
+
+      return { resolvedSafes, sentinelEoas }
+    },
+    staleTime: 60_000,
+  })
+}
 
 // ─── Fetch Safe Info ──────────────────────────────────────────────────────────
 
@@ -250,7 +351,8 @@ export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {
  */
 export function useRoleCheck(role: RoleType) {
   const config = useVaultConfig()
-  const safeAddress = getSafeAddressForRole(config, role)
+  const { data: resolved } = useResolvedRoleSafes()
+  const safeAddress = getResolvedSafeAddressForRole(config, role, resolved?.resolvedSafes)
   const { address, isConnected } = useAccount()
   const { data: safeInfo } = useSafeInfo(safeAddress)
 
@@ -263,21 +365,28 @@ export function useRoleCheck(role: RoleType) {
     args: isConfigured
       ? [ROLE_HASHES[role], getAddress(safeAddress)]
       : undefined,
-    query: { enabled: isConfigured },
+    query: { enabled: isConfigured && role !== 'sentinel' },
   })
+
+  const sentinelHasRole = Boolean(
+    role === 'sentinel' &&
+    address &&
+    resolved?.sentinelEoas.some((eoa) => eoa.toLowerCase() === address.toLowerCase()),
+  )
 
   const isSafeOwner = Boolean(
     address && safeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
   )
+
+  const effectiveHasRole = role === 'sentinel' ? sentinelHasRole : Boolean(hasRole)
 
   return {
     safeAddress,
     isConfigured,
     isConnected,
     isSafeOwner,
-    hasRole: Boolean(hasRole),
-    /** True when: wallet connected + is Safe owner + Safe holds the role on-chain */
-    canPropose: isConnected && isSafeOwner && Boolean(hasRole),
+    hasRole: effectiveHasRole,
+    canPropose: isConnected && (role === 'sentinel' ? effectiveHasRole : isSafeOwner && effectiveHasRole),
     safeInfo,
   }
 }

@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
-import { useAccount } from 'wagmi'
+import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { decodeFunctionData, encodeFunctionData, getAddress, parseUnits } from 'viem'
 import { HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
@@ -383,24 +383,58 @@ function PendingOpCard({
   safeAddress,
   isSafeOwner,
   hasRole,
+  sentinelHasRole,
   isConnected,
   isWrongChain,
+  onRevokeSuccess,
 }: {
   op: PendingOperation
   adminAddress: `0x${string}`
   safeAddress: `0x${string}` | undefined
   isSafeOwner: boolean
   hasRole: boolean
+  sentinelHasRole: boolean
   isConnected: boolean
   isWrongChain: boolean
+  onRevokeSuccess?: () => void
 }) {
   const proposeTx = useProposeSafeTransaction(safeAddress)
   const countdown = useCountdown(Number(op.executableAt))
   const decoded = useMemo(() => decodeAdminOpCalldata(op.data as `0x${string}`), [op.data])
+  const contractAddress = useMemo(() => getAddress(op.contractAddress), [op.contractAddress])
+
+  const {
+    writeContract: writeRevoke,
+    data: revokeTxHash,
+    isPending: revokeIsPending,
+    isSuccess: revokeIsSubmitted,
+    isError: revokeIsError,
+    error: revokeError,
+    reset: resetRevoke,
+  } = useWriteContract()
+
+  const { isLoading: revokeIsConfirming, isSuccess: revokeIsConfirmed } = useWaitForTransactionReceipt({
+    hash: revokeTxHash,
+    query: { enabled: Boolean(revokeTxHash) },
+  })
+
+  useEffect(() => {
+    if (revokeIsConfirmed) onRevokeSuccess?.()
+  }, [revokeIsConfirmed, onRevokeSuccess])
 
   function handleExecute() {
     proposeTx.reset()
     proposeTx.mutate({ to: adminAddress, data: op.data as `0x${string}` })
+  }
+
+  function handleRevoke() {
+    resetRevoke()
+    writeRevoke({
+      address: contractAddress as `0x${string}`,
+      abi: HA_BASE_ABI,
+      functionName: 'revoke',
+      args: [op.data as `0x${string}`],
+    })
   }
 
   const base = 'rounded-md px-3 py-1.5 text-xs font-medium transition-colors'
@@ -430,6 +464,28 @@ function PendingOpCard({
     btnLabel = 'Execute via Safe'
   }
 
+  let revokeLabel = 'Revoke'
+  let revokeDisabled = false
+  let revokeClass = `${base} bg-red-600 text-white hover:bg-red-700`
+
+  if (!isConnected) {
+    revokeLabel = 'Connect wallet'; revokeDisabled = true; revokeClass = disabledStyle
+  } else if (isWrongChain) {
+    revokeLabel = 'Wrong network'; revokeDisabled = true; revokeClass = `${base} bg-amber-100 text-amber-600 cursor-not-allowed`
+  } else if (!sentinelHasRole) {
+    revokeLabel = 'No SENTINEL_ROLE'; revokeDisabled = true; revokeClass = disabledStyle
+  } else if (revokeIsPending) {
+    revokeLabel = 'Confirm…'; revokeDisabled = true
+  } else if (revokeIsConfirming) {
+    revokeLabel = 'Confirming…'; revokeDisabled = true
+  } else if (revokeIsConfirmed) {
+    revokeLabel = 'Revoked'; revokeDisabled = true; revokeClass = `${base} bg-green-600 text-white cursor-not-allowed`
+  } else if (revokeIsSubmitted) {
+    revokeLabel = 'Submitted'; revokeDisabled = true; revokeClass = `${base} bg-green-600 text-white cursor-not-allowed`
+  } else if (revokeIsError) {
+    revokeLabel = 'Retry'; revokeClass = `${base} bg-red-700 text-white hover:bg-red-800`
+  }
+
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -452,7 +508,7 @@ function PendingOpCard({
         </div>
 
         <div className="flex items-center gap-2">
-          {proposeTx.isSuccess && (
+          {(proposeTx.isSuccess || revokeIsSubmitted || revokeIsConfirmed) && (
             <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
               View
             </Link>
@@ -462,6 +518,14 @@ function PendingOpCard({
               {proposeTx.error.message}
             </span>
           )}
+          {revokeIsError && (
+            <span className="max-w-[200px] cursor-help truncate text-xs text-red-600 dark:text-red-400" title={revokeError?.message}>
+              {revokeError?.message ?? 'Revoke failed'}
+            </span>
+          )}
+          <button onClick={handleRevoke} disabled={revokeDisabled} className={revokeClass}>
+            {revokeLabel}
+          </button>
           <button onClick={handleExecute} disabled={btnDisabled} className={btnClass}>
             {btnLabel}
           </button>
@@ -548,6 +612,7 @@ const NAV_RISK_ROWS: RowDef[] = [
 export default function VaultConfigClient() {
   const adminCheck = useRoleCheck('admin')
   const timelockProposerCheck = useRoleCheck('timelock_proposer')
+  const sentinelCheck = useRoleCheck('sentinel')
   const { isConnected, chainId } = useAccount()
   const isWrongChain = isConnected && chainId !== 999
   const vaultConfig = useVaultConfig()
@@ -624,8 +689,10 @@ export default function VaultConfigClient() {
                 safeAddress={adminCheck.safeAddress}
                 isSafeOwner={adminCheck.isSafeOwner}
                 hasRole={adminCheck.hasRole}
+                sentinelHasRole={sentinelCheck.hasRole}
                 isConnected={isConnected}
                 isWrongChain={isWrongChain}
+                onRevokeSuccess={refetch}
               />
             ))}
           </div>

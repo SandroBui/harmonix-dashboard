@@ -1,7 +1,7 @@
 'use client'
 
-import { usePendingSafeTransactions, useSafeInfo } from '@/lib/safe/hooks'
-import { getSafeAddressForRole, ROLE_LABELS } from '@/lib/safe/roles'
+import { usePendingSafeTransactions, useSafeInfo, useResolvedRoleSafes } from '@/lib/safe/hooks'
+import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import type { RoleType } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
@@ -34,7 +34,12 @@ function inferRoleFromMethod(method: string | undefined): RoleType | null {
     case 'removeNavCategory':
     case 'setCategoryStatus':
     case 'setTimelockDuration':
+    case 'grantRole':
+    case 'revokeRole':
+    case 'setRoleTimelock':
       return 'admin'
+    case 'cancelPendingGrant':
+      return 'sentinel'
     default:
       return null
   }
@@ -48,11 +53,12 @@ function useAllRoleTxs(vaultAssetMap: Record<string, string>): {
   refetchAll: () => void
 } {
   const config = useVaultConfig()
-  const addrOperator          = getSafeAddressForRole(config, 'operator')
-  const addrCurator           = getSafeAddressForRole(config, 'curator')
-  const addrPriceUpdater      = getSafeAddressForRole(config, 'price_updater')
-  const addrTimelockProposer  = getSafeAddressForRole(config, 'timelock_proposer')
-  const addrAdmin             = getSafeAddressForRole(config, 'admin')
+  const { data: resolved } = useResolvedRoleSafes()
+  const addrOperator          = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
+  const addrCurator           = getResolvedSafeAddressForRole(config, 'curator', resolved?.resolvedSafes)
+  const addrPriceUpdater      = getResolvedSafeAddressForRole(config, 'price_updater', resolved?.resolvedSafes)
+  const addrTimelockProposer  = getResolvedSafeAddressForRole(config, 'timelock_proposer', resolved?.resolvedSafes)
+  const addrAdmin             = getResolvedSafeAddressForRole(config, 'admin', resolved?.resolvedSafes)
 
   const qOperator          = usePendingSafeTransactions(addrOperator,          vaultAssetMap)
   const qCurator           = usePendingSafeTransactions(addrCurator,           vaultAssetMap)

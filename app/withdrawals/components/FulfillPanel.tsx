@@ -5,8 +5,8 @@ import { useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { VAULT_ASSET_ABI } from '@/lib/abis'
-import { useProposeSafeTransaction } from '@/lib/safe/hooks'
-import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hooks'
+import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import type { SafeInfo } from '@/lib/safe/types'
@@ -34,8 +34,10 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, onSucc
   const { address, isConnected, chainId } = useAccount()
   const config = useVaultConfig()
   const { data: assetMetadata } = useAssetMetadata()
+  const { data: resolved } = useResolvedRoleSafes()
+  const operatorSafeAddress = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'operator'))
+  const proposeTx = useProposeSafeTransaction(operatorSafeAddress)
 
   useEffect(() => {
     if (proposeTx.isSuccess) {

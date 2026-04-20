@@ -7,6 +7,7 @@ const NAV_LINKS: { href: string; label: string; danger?: boolean }[] = [
   { href: '/status', label: 'Status' },
   { href: '/vault-config', label: 'Vault Config' },
   { href: '/admin/nav', label: 'NAV Management' },
+  { href: '/admin/roles', label: 'Roles' },
   { href: '/strategies', label: 'Strategies' },
   { href: '/withdrawals', label: 'Withdrawals' },
   { href: '/timelocks', label: 'Timelocks' },

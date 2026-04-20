@@ -5,8 +5,8 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { FUND_NAV_FEED_ABI } from '@/lib/abis'
-import { useProposeSafeTransaction } from '@/lib/safe/hooks'
-import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hooks'
+import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
 
@@ -22,10 +22,12 @@ export default function AddCategoryForm({ asset, canPropose, isConnected, onClos
   const { chainId } = useAccount()
   const [description, setDescription] = useState('')
   const config = useVaultConfig()
+  const { data: resolved } = useResolvedRoleSafes()
+  const adminSafeAddress = getResolvedSafeAddressForRole(config, 'admin', resolved?.resolvedSafes)
   const feedAddress = useFundNavFeedAddress()
   const assetAddress = getAddress(asset) as `0x${string}`
 
-  const proposeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
+  const proposeTx = useProposeSafeTransaction(adminSafeAddress)
 
   const isWrongChain = isConnected && chainId !== 999
   const canSubmit = isConnected && !isWrongChain && canPropose && description.trim().length > 0 && !proposeTx.isPending && Boolean(feedAddress)

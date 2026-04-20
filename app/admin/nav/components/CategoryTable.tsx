@@ -5,8 +5,8 @@ import { useState, Fragment } from 'react'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
 import { FUND_NAV_FEED_ABI } from '@/lib/abis'
-import { useProposeSafeTransaction } from '@/lib/safe/hooks'
-import { getSafeAddressForRole } from '@/lib/safe/roles'
+import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hooks'
+import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
 import { formatTokenAmount } from '@/lib/format'
@@ -64,6 +64,8 @@ function CategoryRowActions({
 }) {
   const { chainId } = useAccount()
   const config = useVaultConfig()
+  const { data: resolved } = useResolvedRoleSafes()
+  const adminSafeAddress = getResolvedSafeAddressForRole(config, 'admin', resolved?.resolvedSafes)
   const feedAddress = useFundNavFeedAddress()
   const assetAddress = getAddress(asset) as `0x${string}`
   const isWrongChain = roles.isConnected && chainId !== 999
@@ -73,8 +75,8 @@ function CategoryRowActions({
   const canProposeAdmin =
     roles.isConnected && !isWrongChain && roles.isSafeOwner && roles.safeHasAdmin
 
-  const toggleTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
-  const removeTx = useProposeSafeTransaction(getSafeAddressForRole(config, 'admin'))
+  const toggleTx = useProposeSafeTransaction(adminSafeAddress)
+  const removeTx = useProposeSafeTransaction(adminSafeAddress)
   const [confirmRemove, setConfirmRemove] = useState(false)
 
   function handleToggle() {
