@@ -200,7 +200,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-700 dark:bg-neutral-800/50">
                 <th className="w-10 px-4 py-3" />
-                {['ID', 'Asset', 'Controller', 'Shares', 'Assets', 'Requested At', 'Status'].map(
+                {['ID', 'Asset', 'Controller', 'Shares', 'Original Shares', 'Assets', 'Original Assets', 'Requested At', 'Status'].map(
                   (col) => (
                     <th
                       key={col}
@@ -260,9 +260,24 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
                     <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
                       {formatUnits(w.shares, 18)}
                     </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
+                      {w.originalShares === '0' ? '—' : formatUnits(w.originalShares, 18)}
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
                       {meta ? formatUnits(w.assets, meta.decimals) : w.assets}
                       {meta && (
+                        <span className="ml-1 text-neutral-400 dark:text-neutral-500">
+                          {meta.symbol}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
+                      {w.originalAssets === '0'
+                        ? '—'
+                        : meta
+                          ? formatUnits(w.originalAssets, meta.decimals)
+                          : w.originalAssets}
+                      {w.originalAssets !== '0' && meta && (
                         <span className="ml-1 text-neutral-400 dark:text-neutral-500">
                           {meta.symbol}
                         </span>
@@ -272,15 +287,33 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap }: Props)
                       {formatTimestamp(w.requestedAt)}
                     </td>
                     <td className="px-4 py-3">
-                      {w.isFulfilled ? (
-                        <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                          Fulfilled
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
-                          Pending
-                        </span>
-                      )}
+                      {(() => {
+                        const shares = BigInt(w.shares)
+                        const orig = BigInt(w.originalShares)
+                        if (orig > 0n && shares === 0n) {
+                          return (
+                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                              Completed
+                            </span>
+                          )
+                        }
+                        if (orig > 0n && shares > 0n && shares < orig) {
+                          return (
+                            <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                              Partial Claimed
+                            </span>
+                          )
+                        }
+                        return w.isFulfilled ? (
+                          <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                            Fulfilled
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                            Pending
+                          </span>
+                        )
+                      })()}
                     </td>
                   </tr>
                 )

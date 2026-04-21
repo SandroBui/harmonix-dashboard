@@ -11,6 +11,8 @@ export type Withdrawal = {
   assets: string
   requestedAt: number
   isFulfilled: boolean
+  originalShares: string
+  originalAssets: string
 }
 
 const PAGE_SIZE = 100n
@@ -81,6 +83,8 @@ export async function getAllWithdrawals(config: VaultGroupConfig): Promise<Withd
         assets: w.assets.toString(),
         requestedAt: Number(w.requestedAt),
         isFulfilled: w.isFulfilled,
+        originalShares: w.originalShares.toString(),
+        originalAssets: w.originalAssets.toString(),
       })
     }
   }

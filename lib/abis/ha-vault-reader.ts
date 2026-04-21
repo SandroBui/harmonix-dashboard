@@ -869,6 +869,16 @@ export const HA_VAULT_READER_ABI =
             "internalType": "bool",
             "name": "isFulfilled",
             "type": "bool"
+          },
+          {
+            "internalType": "uint128",
+            "name": "originalShares",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "originalAssets",
+            "type": "uint128"
           }
         ],
         "internalType": "struct HaVaultReader.PendingWithdraw[]",
