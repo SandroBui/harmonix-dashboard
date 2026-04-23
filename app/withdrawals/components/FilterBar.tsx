@@ -11,6 +11,8 @@ type Props = {
   endDate: string
   onStartDateChange: (d: string) => void
   onEndDateChange: (d: string) => void
+  controller: string
+  onControllerChange: (v: string) => void
   assetOptions: AssetOption[]
   selectedAssets: Set<string>
   onAssetToggle: (assetAddress: string) => void
@@ -30,13 +32,19 @@ export default function FilterBar({
   endDate,
   onStartDateChange,
   onEndDateChange,
+  controller,
+  onControllerChange,
   assetOptions,
   selectedAssets,
   onAssetToggle,
   onClear,
 }: Props) {
   const hasActiveFilter =
-    status !== 'all' || startDate !== '' || endDate !== '' || selectedAssets.size > 0
+    status !== 'all' ||
+    startDate !== '' ||
+    endDate !== '' ||
+    controller !== '' ||
+    selectedAssets.size > 0
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-700 dark:bg-neutral-800/50">
@@ -73,6 +81,18 @@ export default function FilterBar({
             value={endDate}
             onChange={(e) => onEndDateChange(e.target.value)}
             className="rounded border border-neutral-200 bg-white px-2 py-1 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-neutral-500 dark:text-neutral-400">Controller</label>
+          <input
+            type="text"
+            value={controller}
+            onChange={(e) => onControllerChange(e.target.value)}
+            placeholder="0x… or partial"
+            spellCheck={false}
+            className="w-56 rounded border border-neutral-200 bg-white px-2 py-1 font-mono text-sm text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white"
           />
         </div>
 

@@ -8,6 +8,7 @@ import { FUND_VAULT_ABI, HA_BASE_ABI } from '@/lib/abis'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 import { useTimelockStatus, useFundVaultPending } from '@/lib/hooks/use-timelock-status'
 import type { PendingOp } from '@/lib/hooks/use-timelock-status'
 import { useCountdown } from '@/lib/hooks/use-countdown'
@@ -618,6 +619,7 @@ function AssetCard({ asset }: { asset: AssetStrategySummary }) {
       <div className="mb-3 flex items-center gap-2">
         <span className="text-sm font-semibold text-neutral-900 dark:text-white">{asset.symbol}</span>
         <span className="text-xs text-neutral-400 font-mono">{truncateAddress(asset.asset)}</span>
+        <CopyButton value={asset.asset} />
       </div>
       <div className="space-y-2 text-sm">
         <Row label="Idle (FundVault)" value={formatTokenAmount(asset.idleAssets, asset.decimals)} symbol={asset.symbol} />
@@ -690,6 +692,7 @@ function StrategyRow({ strategy, decimals, symbol }: { strategy: StrategyData; d
     <tr className="border-b border-neutral-100 dark:border-neutral-800">
       <td className="py-2 pr-4 font-mono text-xs text-neutral-700 dark:text-neutral-300">
         {truncateAddress(strategy.address)}
+        <CopyButton value={strategy.address} />
       </td>
       <td className="py-2 pr-4 text-neutral-600 dark:text-neutral-400">
         {strategy.description || '-'}

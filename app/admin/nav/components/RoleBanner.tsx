@@ -1,4 +1,5 @@
 import { truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 
 type Props = {
   isConnected: boolean
@@ -54,8 +55,8 @@ export default function RoleBanner({
     return (
       <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
         ✓ Full NAV access — Operator Safe{' '}
-        <span className="font-mono font-medium">{puLabel}</span> and Admin Safe{' '}
-        <span className="font-mono font-medium">{adminLabel}</span>.
+        <span className="font-mono font-medium">{puLabel}</span><CopyButton value={operatorSafe} /> and Admin Safe{' '}
+        <span className="font-mono font-medium">{adminLabel}</span><CopyButton value={adminSafe} />.
         You are an owner and can propose transactions.
       </div>
     )
@@ -64,7 +65,7 @@ export default function RoleBanner({
   if (safeHasOperator) {
     return (
       <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-        ✓ Safe <span className="font-mono font-medium">{puLabel}</span> has{' '}
+        ✓ Safe <span className="font-mono font-medium">{puLabel}</span><CopyButton value={operatorSafe} /> has{' '}
         <span className="font-medium">OPERATOR_ROLE</span> — can sync NAV values and trigger updateNav().
         Category management requires <span className="font-medium">DEFAULT_ADMIN_ROLE</span>.
       </div>
@@ -74,7 +75,7 @@ export default function RoleBanner({
   if (safeHasAdmin) {
     return (
       <div className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-800 dark:border-purple-800 dark:bg-purple-900/20 dark:text-purple-300">
-        ✓ Safe <span className="font-mono font-medium">{adminLabel}</span> has{' '}
+        ✓ Safe <span className="font-mono font-medium">{adminLabel}</span><CopyButton value={adminSafe} /> has{' '}
         <span className="font-medium">DEFAULT_ADMIN_ROLE</span> — can add and remove NAV categories.
         Syncing values requires <span className="font-medium">OPERATOR_ROLE</span>.
       </div>

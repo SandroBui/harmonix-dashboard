@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRoleCheck } from '@/lib/safe/hooks'
 import { truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 import { getTimelockPageData } from '@/lib/timelocks-reader'
 import { useVaultConfig } from '@/lib/vault-context'
 import DurationsTab from './DurationsTab'
@@ -66,14 +67,17 @@ export default function TimelockClient() {
             <span className="font-mono text-neutral-900 dark:text-white">
               {safeAddress && safeAddress !== '0x' ? truncateAddress(safeAddress) : '—'}
             </span>
+            {safeAddress && safeAddress !== '0x' && <CopyButton value={safeAddress} />}
           </div>
           <div>
             <span className="text-neutral-500 dark:text-neutral-400">FundVault: </span>
             <span className="font-mono text-neutral-900 dark:text-white">{truncateAddress(data.fundVaultAddress)}</span>
+            <CopyButton value={data.fundVaultAddress} />
           </div>
           <div>
             <span className="text-neutral-500 dark:text-neutral-400">VaultManagerAdmin: </span>
             <span className="font-mono text-neutral-900 dark:text-white">{truncateAddress(data.vaultManagerAdminAddress)}</span>
+            <CopyButton value={data.vaultManagerAdminAddress} />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <span

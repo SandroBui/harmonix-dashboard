@@ -1,4 +1,4 @@
-import { getAllWithdrawals, getVaultAssetMap } from '@/lib/vault-reader'
+import { getWithdrawalsWindow, getVaultAssetMap } from '@/lib/vault-reader'
 import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import WithdrawalsClient from './components/WithdrawalsClient'
 import RefreshButton from './components/RefreshButton'
@@ -12,15 +12,29 @@ export const metadata = {
 export default async function WithdrawalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ vault?: string }>
+  searchParams: Promise<{ vault?: string; days?: string; from?: string; to?: string }>
 }) {
-  const config = resolveVaultFromParams(await searchParams)
-  let withdrawals
+  const sp = await searchParams
+  const config = resolveVaultFromParams(sp)
+
+  const days = sp.days === 'all' ? 0 : Number(sp.days ?? 7)
+  const nowSec = Math.floor(Date.now() / 1000)
+  const windowOpts =
+    sp.from || sp.to
+      ? {
+          fromId: sp.from ? BigInt(sp.from) : undefined,
+          toId: sp.to ? BigInt(sp.to) : undefined,
+        }
+      : days > 0
+        ? { sinceTs: nowSec - days * 86400 }
+        : {}
+
+  let windowResult
   let vaultAssetMap: Record<string, string>
 
   try {
-    ;[withdrawals, vaultAssetMap] = await Promise.all([
-      getAllWithdrawals(config),
+    ;[windowResult, vaultAssetMap] = await Promise.all([
+      getWithdrawalsWindow(config, windowOpts),
       getVaultAssetMap(config),
     ])
   } catch (err) {
@@ -42,14 +56,24 @@ export default async function WithdrawalsPage({
       <div className="mb-6 flex items-start gap-3">
         <h1 className="text-2xl font-semibold text-neutral-900 dark:text-white">Withdrawals</h1>
         <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-sm font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-          {withdrawals.length}
+          {windowResult.rows.length} / {windowResult.totalQueueLength}
         </span>
         <div className="ml-auto">
           <RefreshButton />
         </div>
       </div>
 
-      <WithdrawalsClient withdrawals={withdrawals} vaultAssetMap={vaultAssetMap} />
+      <WithdrawalsClient
+        withdrawals={windowResult.rows}
+        vaultAssetMap={vaultAssetMap}
+        windowMeta={{
+          totalQueueLength: windowResult.totalQueueLength,
+          fromId: windowResult.fromId,
+          toId: windowResult.toId,
+          hasOlder: windowResult.hasOlder,
+          days,
+        }}
+      />
     </main>
   )
 }

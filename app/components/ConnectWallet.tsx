@@ -2,6 +2,7 @@
 
 import { useConnection, useConnect, useDisconnect, useSwitchChain, useConnectors } from 'wagmi'
 import { hyperEvmMainnet } from '@/lib/wagmi-config'
+import CopyButton from '@/app/components/CopyButton'
 
 function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
@@ -42,6 +43,7 @@ export default function ConnectWallet() {
     <div className="flex items-center gap-2">
       <span className="rounded-full bg-neutral-100 px-2.5 py-1 font-mono text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
         {truncateAddress(address!)}
+        <CopyButton value={address!} />
       </span>
       <button
         onClick={() => disconnect()}

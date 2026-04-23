@@ -1,5 +1,6 @@
 import type { VaultOverviewData } from '@/lib/status-reader'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 import CapitalBreakdownBar from './CapitalBreakdownBar'
 
 type Props = { vault: VaultOverviewData }
@@ -30,6 +31,7 @@ export default function VaultCard({ vault }: Props) {
           </h3>
           <p className="mt-0.5 font-mono text-xs text-neutral-400 dark:text-neutral-500">
             {truncateAddress(vault.vault)}
+            <CopyButton value={vault.vault} />
           </p>
         </div>
         {vault.isPaused ? (
@@ -119,6 +121,7 @@ export default function VaultCard({ vault }: Props) {
               >
                 <span className="font-mono text-neutral-400 dark:text-neutral-500">
                   {truncateAddress(s.address)}
+                  <CopyButton value={s.address} />
                 </span>
                 <span className="tabular-nums text-neutral-700 dark:text-neutral-300">
                   {formatTokenAmount(s.allocated, d, 4)} {vault.symbol}

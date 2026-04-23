@@ -92,3 +92,112 @@ export async function getAllWithdrawals(config: VaultGroupConfig): Promise<Withd
   results.reverse()
   return results
 }
+
+export type WithdrawalsWindow = {
+  rows: Withdrawal[]
+  totalQueueLength: string
+  fromId: string | null
+  toId: string | null
+  hasOlder: boolean
+}
+
+export async function getWithdrawalsWindow(
+  config: VaultGroupConfig,
+  opts: { sinceTs?: number; untilTs?: number; fromId?: bigint; toId?: bigint } = {},
+): Promise<WithdrawalsWindow> {
+  const publicClient = getPublicClient()
+
+  const length = await publicClient.readContract({
+    address: config.haVaultReaderAddress,
+    abi: HA_VAULT_READER_ABI,
+    functionName: 'getRedeemQueueLength',
+  })
+
+  if (length === 0n) {
+    return { rows: [], totalQueueLength: '0', fromId: null, toId: null, hasOlder: false }
+  }
+
+  let fromId: bigint
+  if (opts.fromId !== undefined) {
+    fromId = opts.fromId
+  } else if (opts.sinceTs !== undefined) {
+    fromId = await publicClient.readContract({
+      address: config.haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'findFirstRedeemIdAfter',
+      args: [BigInt(opts.sinceTs)],
+    })
+    if (fromId === 0n) {
+      return {
+        rows: [],
+        totalQueueLength: length.toString(),
+        fromId: null,
+        toId: null,
+        hasOlder: length > 0n,
+      }
+    }
+  } else {
+    fromId = 1n
+  }
+
+  let toId: bigint
+  if (opts.toId !== undefined) {
+    toId = opts.toId
+  } else if (opts.untilTs !== undefined) {
+    const firstAfterEnd = await publicClient.readContract({
+      address: config.haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'findFirstRedeemIdAfter',
+      args: [BigInt(opts.untilTs + 1)],
+    })
+    toId = firstAfterEnd === 0n ? length : firstAfterEnd - 1n
+  } else {
+    toId = length
+  }
+
+  if (fromId < 1n) fromId = 1n
+  if (toId > length) toId = length
+  if (fromId > toId) {
+    return {
+      rows: [],
+      totalQueueLength: length.toString(),
+      fromId: null,
+      toId: null,
+      hasOlder: fromId > 1n,
+    }
+  }
+
+  const rows: Withdrawal[] = []
+  for (let cur = fromId; cur <= toId; cur += PAGE_SIZE) {
+    const chunkTo = cur + PAGE_SIZE - 1n > toId ? toId : cur + PAGE_SIZE - 1n
+    const page = await publicClient.readContract({
+      address: config.haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'getPendingWithdrawals',
+      args: [cur, chunkTo],
+    })
+    for (const w of page) {
+      rows.push({
+        id: w.id.toString(),
+        vault: w.vault.toLowerCase(),
+        controller: w.controller.toLowerCase(),
+        shares: w.shares.toString(),
+        assets: w.assets.toString(),
+        requestedAt: Number(w.requestedAt),
+        isFulfilled: w.isFulfilled,
+        originalShares: w.originalShares.toString(),
+        originalAssets: w.originalAssets.toString(),
+      })
+    }
+  }
+
+  rows.reverse()
+
+  return {
+    rows,
+    totalQueueLength: length.toString(),
+    fromId: fromId.toString(),
+    toId: toId.toString(),
+    hasOlder: fromId > 1n,
+  }
+}

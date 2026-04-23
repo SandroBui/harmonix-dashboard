@@ -6,6 +6,7 @@ import type { RoleType } from '@/lib/safe/roles'
 import type { SafeInfo } from '@/lib/safe/types'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { formatTokenAmount } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 import type { RoleTaggedTx } from './SafeTxClient'
 import SafeTxDetail from './SafeTxDetail'
 
@@ -39,6 +40,7 @@ function SafeMetaBadge({ safeAddress, safeInfo }: { safeAddress: string; safeInf
   return (
     <span className="inline-flex items-center gap-1 rounded bg-neutral-100 px-2 py-0.5 font-mono text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
       {truncateAddress(safeAddress)}
+      <CopyButton value={safeAddress} />
       {safeInfo && (
         <span className="text-neutral-400 dark:text-neutral-500">
           {' '}· {safeInfo.threshold}/{safeInfo.owners.length}

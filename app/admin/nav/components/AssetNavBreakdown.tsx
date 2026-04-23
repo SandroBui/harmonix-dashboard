@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { formatDenomination, truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 import type { NavPageData } from '@/lib/nav-reader'
 import CategoryTable, { type Roles } from './CategoryTable'
 
@@ -108,6 +109,7 @@ export default function AssetNavBreakdown({ data, roles }: Props) {
                     <span className="font-mono text-xs text-neutral-400 dark:text-neutral-500">
                       {truncateAddress(assetData.asset)}
                     </span>
+                    <CopyButton value={assetData.asset} />
                     <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
                       {assetData.categories.length} {assetData.categories.length === 1 ? 'category' : 'categories'}
                     </span>

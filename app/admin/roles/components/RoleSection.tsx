@@ -446,7 +446,8 @@ function GrantSection({
       )}
       {pendingGrant && (
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Pending grant exists for {truncateAddress(pendingGrant.account)}.
+          Pending grant exists for {truncateAddress(pendingGrant.account)}
+          <CopyButton value={pendingGrant.account} />
           {!pendingIsReady && pendingCountdown && pendingCountdown !== 'Ready' ? ` Ready in ${pendingCountdown}.` : ''}
         </p>
       )}

@@ -1,5 +1,6 @@
 import type { VaultOverviewData } from '@/lib/status-reader'
 import { truncateAddress } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 
 type Props = { vaults: VaultOverviewData[] }
 
@@ -22,6 +23,7 @@ export default function PausedVaultAlert({ vaults }: Props) {
               <li key={v.vault} className="flex items-center gap-2">
                 <span className="font-medium">{v.symbol} Vault</span>
                 <span className="font-mono text-xs opacity-70">{truncateAddress(v.vault)}</span>
+                <CopyButton value={v.vault} />
               </li>
             ))}
           </ul>
