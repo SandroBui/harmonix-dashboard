@@ -30,35 +30,68 @@ export default function FundSummaryCards({ navSnapshot, pricePerShare, vaults }:
     0n,
   )
 
-  const cards = [
+  const cards: { label: string; value: React.ReactNode; sub: React.ReactNode | null; warn: boolean }[] = [
     {
-      label: 'Gross NAV',
-      value: formatDenomination(navSnapshot.navDenomination),
-      sub: 'Total NAV before redemption deductions',
-      warn: false,
-    },
-    {
-      label: 'Effective NAV',
-      value: formatDenomination(navSnapshot.effNavDenomination),
-      sub: 'Effective NAV value currently managed by the vaults',
+      label: 'NAV',
+      value: (
+        <div className="flex items-baseline gap-4">
+          <div>
+            {formatDenomination(navSnapshot.effNavDenomination)}
+            <div className="text-xs font-normal text-neutral-400">Effective</div>
+          </div>
+          <div className="text-neutral-300 dark:text-neutral-600">·</div>
+          <div className="text-neutral-700 dark:text-neutral-200">
+            {formatDenomination(navSnapshot.navDenomination)}
+            <div className="text-xs font-normal text-neutral-400">Gross</div>
+          </div>
+        </div>
+      ),
+      sub: null,
       warn: false,
     },
     {
       label: 'Price Per Share',
-      value: formatTokenAmount(pricePerShare, 18, 6),
+      value: (
+        <>
+          {formatTokenAmount(pricePerShare, 18, 6)}
+          <span className="ml-1 text-sm font-normal text-neutral-400">USDC / share</span>
+          {navSnapshot.isValidPps && (
+            <svg
+              className="ml-1.5 inline-block align-[-2px] text-green-500"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-label="PPS valid"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </>
+      ),
       sub: navSnapshot.isValidPps ? 'PPS is valid' : '⚠ PPS is invalid',
       warn: !navSnapshot.isValidPps,
     },
     {
-      label: 'Pending Assets',
-      value: formatDenomination(totalPendingDenom.toString()),
-      sub: 'Awaiting fulfillment across all vaults',
-      warn: false,
-    },
-    {
-      label: 'Claimable Assets',
-      value: formatDenomination(totalClaimableDenom.toString()),
-      sub: 'Ready to be claimed across all vaults',
+      label: 'Withdrawal Assets',
+      value: (
+        <div className="flex items-baseline gap-4">
+          <div>
+            {formatDenomination(totalPendingDenom.toString())}
+            <div className="text-xs font-normal text-neutral-400">Pending</div>
+          </div>
+          <div className="text-neutral-300 dark:text-neutral-600">·</div>
+          <div className="text-neutral-700 dark:text-neutral-200">
+            {formatDenomination(totalClaimableDenom.toString())}
+            <div className="text-xs font-normal text-neutral-400">Claimable</div>
+          </div>
+        </div>
+      ),
+      sub: 'Across all vaults',
       warn: false,
     },
   ]
@@ -68,7 +101,7 @@ export default function FundSummaryCards({ navSnapshot, pricePerShare, vaults }:
       <h2 className="mb-3 text-lg font-semibold text-neutral-900 dark:text-white">
         Fund Overview
       </h2>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => (
           <div
             key={card.label}
@@ -79,18 +112,20 @@ export default function FundSummaryCards({ navSnapshot, pricePerShare, vaults }:
             }`}
           >
             <p className="text-sm text-neutral-500 dark:text-neutral-400">{card.label}</p>
-            <p className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-white">
+            <div className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-white">
               {card.value}
-            </p>
-            <p
-              className={`mt-1 text-xs ${
-                card.warn
-                  ? 'font-medium text-yellow-700 dark:text-yellow-400'
-                  : 'text-neutral-400 dark:text-neutral-500'
-              }`}
-            >
-              {card.sub}
-            </p>
+            </div>
+            {card.sub !== null && (
+              <p
+                className={`mt-1 text-xs ${
+                  card.warn
+                    ? 'font-medium text-yellow-700 dark:text-yellow-400'
+                    : 'text-neutral-400 dark:text-neutral-500'
+                }`}
+              >
+                {card.sub}
+              </p>
+            )}
           </div>
         ))}
       </div>

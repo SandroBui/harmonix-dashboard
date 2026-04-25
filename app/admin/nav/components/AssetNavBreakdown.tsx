@@ -95,9 +95,18 @@ export default function AssetNavBreakdown({ data, roles }: Props) {
               className="rounded-lg border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
             >
               {/* Asset header row — clickable to expand */}
-              <button
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => toggleAsset(assetData.asset)}
-                className="w-full rounded-lg px-4 py-4 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    toggleAsset(assetData.asset)
+                  }
+                }}
+                aria-expanded={isExpanded}
+                className="w-full cursor-pointer rounded-lg px-4 py-4 text-left transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-neutral-800/50"
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
 
@@ -130,7 +139,7 @@ export default function AssetNavBreakdown({ data, roles }: Props) {
                     {isExpanded ? '▲' : '▼'}
                   </span>
                 </div>
-              </button>
+              </div>
 
               {/* Expanded category table */}
               {isExpanded && (

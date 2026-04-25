@@ -44,79 +44,94 @@ function Tip({ text, children }: { text: string; children: React.ReactNode }) {
 export default function NavSummaryCards({ data }: Props) {
   const delta = ppsDelta(data.livePpsValue, data.storedPps)
 
-  const cards = [
-    // ── Stored PPS ──────────────────────────────────────────────────────────
+  const cards: {
+    label: string
+    value: React.ReactNode
+    sub: React.ReactNode | null
+    warn: boolean
+  }[] = [
+    // ── PPS (Live primary, Stored secondary) ────────────────────────────────
     {
-      label: 'Stored PPS',
-      value: formatTokenAmount(data.storedPps, 18, 6),
-      sub: <LastUpdated lastNavUpdated={data.lastNavUpdated} />,
-      warn: false,
-      badge: null,
-    },
-    // ── Live PPS — validity badge inline ────────────────────────────────────
-    {
-      label: 'Live PPS',
+      label: 'Price Per Share',
       value: (
-        <span className="flex items-center gap-1.5">
-          {formatTokenAmount(data.livePpsValue, 18, 6)}
-          <Tip text={data.liveIsValidPps ? 'PPS is valid — deviation within bounds' : 'PPS is invalid — deviation exceeds threshold'}>
-            {data.liveIsValidPps ? (
-              // ✓ tick
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
-                  <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
-                </svg>
-              </span>
-            ) : (
-              // ✗ cross
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
-                  <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
-                </svg>
-              </span>
-            )}
-          </Tip>
-        </span>
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span>{formatTokenAmount(data.livePpsValue, 18, 6)}</span>
+              <Tip text={data.liveIsValidPps ? 'PPS is valid — deviation within bounds' : 'PPS is invalid — deviation exceeds threshold'}>
+                {data.liveIsValidPps ? (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                      <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
+                    </svg>
+                  </span>
+                ) : (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                      <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
+                    </svg>
+                  </span>
+                )}
+              </Tip>
+            </div>
+            <div className="text-xs font-normal text-neutral-400">Live</div>
+          </div>
+          <div className="text-right text-neutral-700 dark:text-neutral-200">
+            {formatTokenAmount(data.storedPps, 18, 6)}
+            <div className="text-xs font-normal text-neutral-400">Stored</div>
+          </div>
+        </div>
       ),
       sub: delta ? (
-        <span className={delta.positive ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
-          {delta.pct} vs stored
+        <span>
+          <span className={delta.positive ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
+            {delta.pct}
+          </span>{' '}
+          vs stored ·{' '}
+          <span className="text-neutral-500 dark:text-neutral-400">
+            <LastUpdated lastNavUpdated={data.lastNavUpdated} />
+          </span>
         </span>
-      ) : 'vs stored PPS',
+      ) : (
+        <LastUpdated lastNavUpdated={data.lastNavUpdated} />
+      ),
       warn: !data.liveIsValidPps,
-      badge: null,
     },
-    // ── Gross NAV ───────────────────────────────────────────────────────────
+    // ── NAV (Effective primary, Gross secondary) ────────────────────────────
     {
-      label: 'Gross NAV',
-      value: formatDenomination(data.liveNavDenomination),
-      sub: 'Total live NAV (denomination)',
+      label: 'NAV',
+      value: (
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            {formatDenomination(data.liveEffNavDenomination)}
+            <div className="text-xs font-normal text-neutral-400">Effective</div>
+          </div>
+          <div className="text-right text-neutral-700 dark:text-neutral-200">
+            {formatDenomination(data.liveNavDenomination)}
+            <div className="text-xs font-normal text-neutral-400">Gross</div>
+          </div>
+        </div>
+      ),
+      sub: null,
       warn: false,
-      badge: null,
     },
-    // ── Effective NAV ───────────────────────────────────────────────────────
+    // ── Withdrawal NAV (Pending primary, Claimable secondary) ───────────────
     {
-      label: 'Effective NAV',
-      value: formatDenomination(data.liveEffNavDenomination),
-      sub: 'After pending redemption deductions',
+      label: 'Withdrawal NAV',
+      value: (
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            {formatDenomination(data.totalPendingNav)}
+            <div className="text-xs font-normal text-neutral-400">Pending</div>
+          </div>
+          <div className="text-right text-neutral-700 dark:text-neutral-200">
+            {formatDenomination(data.totalClaimableNav)}
+            <div className="text-xs font-normal text-neutral-400">Claimable</div>
+          </div>
+        </div>
+      ),
+      sub: 'Across all vaults',
       warn: false,
-      badge: null,
-    },
-    // ── Claimable NAV ───────────────────────────────────────────────────────
-    {
-      label: 'Claimable NAV',
-      value: formatDenomination(data.totalClaimableNav),
-      sub: 'Assets ready to be claimed across all vaults',
-      warn: false,
-      badge: null,
-    },
-    // ── Pending NAV ─────────────────────────────────────────────────────────
-    {
-      label: 'Pending NAV',
-      value: formatDenomination(data.totalPendingNav),
-      sub: 'Assets awaiting fulfillment across all vaults',
-      warn: false,
-      badge: null,
     },
   ]
 
@@ -125,7 +140,7 @@ export default function NavSummaryCards({ data }: Props) {
       <h2 className="mb-3 text-lg font-semibold text-neutral-900 dark:text-white">
         NAV Overview
       </h2>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => (
           <div
             key={card.label}
