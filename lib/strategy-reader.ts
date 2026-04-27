@@ -1,7 +1,17 @@
-import { HA_VAULT_READER_ABI, STRATEGY_ABI } from './contracts'
+import { HA_VAULT_READER_ABI, STRATEGY_ABI, HA_PORTFOLIO_MARGIN_ABI } from './contracts'
 import { getPublicClient } from './client'
 import { fetchAssetMetadataForAddresses } from './asset-metadata'
 import type { VaultGroupConfig } from './vault-group-config'
+
+const ERC20_BALANCE_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
 
 // ─── Serialisable output types (no bigints) ───────────────────────────────────
 
@@ -9,10 +19,14 @@ export type StrategyData = {
   address: string
   asset: string
   description: string
-  totalAssets: string
+  totalAssets: string    // getAllocated — FundVault's net accounting (shown as NAV)
+  evmBalance: string     // ERC20.balanceOf(strategy) — tokens held on HyperEVM
   cap: string
   totalAllocated: string
   totalDeallocated: string
+  // HaPortfolioMargin-only — undefined for other strategy types, or if the call reverts
+  spotBalance?: string      // HyperCore spot balance, in EVM decimals
+  lendingBalance?: string   // PM lending supply, in EVM decimals
 }
 
 export type AssetStrategySummary = {
@@ -67,7 +81,12 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
   // ── Batch 3: per-strategy data ───────────────────────────────────────────
   const allStrategies = (strategyLists as `0x${string}`[][]).flat()
 
-  const [allocations, caps, totalAllocated, totalDeallocated, descriptions] = allStrategies.length > 0
+  // Pair each strategy address with its asset address for balanceOf calls
+  const allStrategyAssets = (strategyLists as `0x${string}`[][]).flatMap((list, i) =>
+    list.map(() => assets[i] as `0x${string}`),
+  )
+
+  const [allocations, caps, totalAllocated, totalDeallocated, descriptions, evmBalances] = allStrategies.length > 0
     ? await Promise.all([
         Promise.all(allStrategies.map((s) => read('getAllocated', [s]) as Promise<bigint>)),
         Promise.all(allStrategies.map((s) => read('getStrategyCap', [s]) as Promise<bigint>)),
@@ -80,8 +99,48 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
             functionName: 'description',
           }) as Promise<string>
         )),
+        Promise.all(allStrategies.map((s, i) =>
+          publicClient.readContract({
+            address: allStrategyAssets[i],
+            abi: ERC20_BALANCE_ABI,
+            functionName: 'balanceOf',
+            args: [s],
+          }) as Promise<bigint>
+        )),
       ])
-    : [[], [], [], [], []]
+    : [[], [], [], [], [], []]
+
+  // ── Batch 3b: HaPortfolioMargin-specific views ───────────────────────────
+  // Conditional on description prefix; matches the deployment convention
+  // "HaPortfolioMargin - <ASSET>". A revert (e.g. precompile not initialised)
+  // is swallowed and treated the same as "not a HaPortfolioMargin" — the UI
+  // simply omits the breakdown row in that case.
+  const isHaPortfolioMargin = allStrategies.map((_, i) =>
+    (descriptions[i] ?? '').startsWith('HaPortfolioMargin'),
+  )
+
+  const [spotBalances, lendingBalances] = allStrategies.length > 0
+    ? await Promise.all([
+        Promise.all(allStrategies.map((s, i) =>
+          isHaPortfolioMargin[i]
+            ? (publicClient.readContract({
+                address: s,
+                abi: HA_PORTFOLIO_MARGIN_ABI,
+                functionName: 'spotBalance',
+              }) as Promise<bigint>).catch(() => null)
+            : Promise.resolve(null),
+        )),
+        Promise.all(allStrategies.map((s, i) =>
+          isHaPortfolioMargin[i]
+            ? (publicClient.readContract({
+                address: s,
+                abi: HA_PORTFOLIO_MARGIN_ABI,
+                functionName: 'lendingBalance',
+              }) as Promise<bigint>).catch(() => null)
+            : Promise.resolve(null),
+        )),
+      ])
+    : [[], []]
 
   // ── Assemble per-asset data ──────────────────────────────────────────────
   let globalIdx = 0
@@ -96,14 +155,19 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
     const assetStrategies = (strategyLists[i] ?? []) as `0x${string}`[]
     const strategies: StrategyData[] = assetStrategies.map((addr) => {
       const idx = globalIdx++
+      const spot = spotBalances[idx]
+      const lending = lendingBalances[idx]
       return {
         address: addr.toLowerCase(),
         asset: assetAddr,
         description: descriptions[idx] ?? '',
         totalAssets: (allocations[idx] ?? 0n).toString(),
+        evmBalance: (evmBalances[idx] ?? 0n).toString(),
         cap: (caps[idx] ?? 0n).toString(),
         totalAllocated: (totalAllocated[idx] ?? 0n).toString(),
         totalDeallocated: (totalDeallocated[idx] ?? 0n).toString(),
+        spotBalance: spot !== null && spot !== undefined ? spot.toString() : undefined,
+        lendingBalance: lending !== null && lending !== undefined ? lending.toString() : undefined,
       }
     })
 

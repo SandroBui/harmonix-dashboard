@@ -9,11 +9,13 @@ import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
+import Tooltip from '@/app/components/Tooltip'
 import { useTimelockStatus, useFundVaultPending } from '@/lib/hooks/use-timelock-status'
 import type { PendingOp } from '@/lib/hooks/use-timelock-status'
 import { useCountdown } from '@/lib/hooks/use-countdown'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import type { StrategyPageData, AssetStrategySummary, StrategyData } from '@/lib/strategy-reader'
+import StrategyOperations from './StrategyOperations'
 
 type Props = { data: StrategyPageData }
 
@@ -378,6 +380,9 @@ export default function StrategyClient({ data }: Props) {
           )}
         </div>
       </section>
+      {/* ── Strategy-Level Operations ──────────────────────────────────────── */}
+      <StrategyOperations data={data} />
+
       {/* ── Pending Timelock Operations ────────────────────────────────────── */}
       {(pendingOps.data?.length ?? 0) > 0 && (
         <section>
@@ -657,79 +662,162 @@ function AssetStrategiesTable({ asset }: { asset: AssetStrategySummary }) {
   }
 
   return (
-    <div className="mb-6 overflow-x-auto">
-      <h3 className="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+    <div className="mb-6">
+      <h3 className="mb-3 text-sm font-medium text-neutral-700 dark:text-neutral-300">
         {asset.symbol} Strategies
       </h3>
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-neutral-200 dark:border-neutral-700">
-            <th className="pb-2 pr-4 font-medium text-neutral-500 dark:text-neutral-400">Address</th>
-            <th className="pb-2 pr-4 font-medium text-neutral-500 dark:text-neutral-400">Description</th>
-            <th className="pb-2 pr-4 text-right font-medium text-neutral-500 dark:text-neutral-400">Balance</th>
-            <th className="pb-2 pr-4 text-right font-medium text-neutral-500 dark:text-neutral-400">Cap</th>
-            <th className="pb-2 pr-4 text-right font-medium text-neutral-500 dark:text-neutral-400">Utilization</th>
-            <th className="pb-2 pr-4 text-right font-medium text-neutral-500 dark:text-neutral-400">Total In</th>
-            <th className="pb-2 text-right font-medium text-neutral-500 dark:text-neutral-400">Total Out</th>
-          </tr>
-        </thead>
-        <tbody>
-          {asset.strategies.map((s) => (
-            <StrategyRow key={s.address} strategy={s} decimals={asset.decimals} symbol={asset.symbol} />
-          ))}
-        </tbody>
-      </table>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {asset.strategies.map((s) => (
+          <StrategyCard key={s.address} strategy={s} decimals={asset.decimals} symbol={asset.symbol} />
+        ))}
+      </div>
     </div>
   )
 }
 
-function StrategyRow({ strategy, decimals, symbol }: { strategy: StrategyData; decimals: number; symbol: string }) {
-  const balance = BigInt(strategy.totalAssets)
-  const cap = BigInt(strategy.cap)
-  const utilization = cap > 0n ? Number((balance * 10000n) / cap) / 100 : 0
-
+function StatCell({
+  label,
+  value,
+  symbol,
+  isBlocked,
+  tooltip,
+}: {
+  label: string
+  value: string
+  symbol: string
+  isBlocked?: boolean
+  tooltip?: string
+}) {
   return (
-    <tr className="border-b border-neutral-100 dark:border-neutral-800">
-      <td className="py-2 pr-4 font-mono text-xs text-neutral-700 dark:text-neutral-300">
-        {truncateAddress(strategy.address)}
-        <CopyButton value={strategy.address} />
-      </td>
-      <td className="py-2 pr-4 text-neutral-600 dark:text-neutral-400">
-        {strategy.description || '-'}
-      </td>
-      <td className="py-2 pr-4 text-right text-neutral-900 dark:text-white">
-        {formatTokenAmount(strategy.totalAssets, decimals)}
-        <span className="ml-1 text-xs text-neutral-400">{symbol}</span>
-      </td>
-      <td className="py-2 pr-4 text-right text-neutral-700 dark:text-neutral-300">
-        {cap === 0n ? (
-          <span className="text-red-500">Blocked</span>
+    <div className="px-4 py-3">
+      <p className="mb-1 text-xs text-neutral-400">
+        {tooltip ? (
+          <Tooltip text={tooltip} width="w-64">
+            {label}
+          </Tooltip>
         ) : (
-          <>
-            {formatTokenAmount(strategy.cap, decimals)}
-            <span className="ml-1 text-xs text-neutral-400">{symbol}</span>
-          </>
+          label
         )}
-      </td>
-      <td className="py-2 pr-4 text-right">
-        <span
-          className={
-            utilization >= 90
-              ? 'text-red-600 dark:text-red-400'
-              : utilization >= 70
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-green-600 dark:text-green-400'
-          }
-        >
-          {utilization.toFixed(1)}%
-        </span>
-      </td>
-      <td className="py-2 pr-4 text-right text-neutral-500 dark:text-neutral-400 text-xs">
-        {formatTokenAmount(strategy.totalAllocated, decimals)}
-      </td>
-      <td className="py-2 text-right text-neutral-500 dark:text-neutral-400 text-xs">
-        {formatTokenAmount(strategy.totalDeallocated, decimals)}
-      </td>
-    </tr>
+      </p>
+      {isBlocked ? (
+        <p className="text-sm font-medium text-red-500">Blocked</p>
+      ) : (
+        <p className="text-sm font-medium text-neutral-900 dark:text-white">
+          {value}{' '}
+          <span className="text-xs font-normal text-neutral-400">{symbol}</span>
+        </p>
+      )}
+    </div>
   )
 }
+
+function StrategyCard({ strategy, decimals, symbol }: { strategy: StrategyData; decimals: number; symbol: string }) {
+  const nav = BigInt(strategy.totalAssets)
+  const cap = BigInt(strategy.cap)
+  const isBlocked = cap === 0n
+  const utilization = !isBlocked ? Number((nav * 10000n) / cap) / 100 : 0
+
+  const utilColor =
+    utilization >= 90
+      ? 'text-red-600 dark:text-red-400'
+      : utilization >= 70
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-green-600 dark:text-green-400'
+
+  const barColor =
+    utilization >= 90
+      ? 'bg-red-500'
+      : utilization >= 70
+        ? 'bg-amber-500'
+        : 'bg-green-500'
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900">
+      {/* Header */}
+      <div className="px-4 pb-3 pt-4">
+        <p className="truncate text-sm font-semibold text-neutral-900 dark:text-white">
+          {strategy.description || 'Unnamed strategy'}
+        </p>
+        <div className="mt-0.5 flex items-center gap-1">
+          <span className="font-mono text-xs text-neutral-400">{truncateAddress(strategy.address)}</span>
+          <CopyButton value={strategy.address} />
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 divide-x divide-neutral-100 border-t border-neutral-100 dark:divide-neutral-800 dark:border-neutral-800">
+        <StatCell
+          label="NAV"
+          value={formatTokenAmount(strategy.totalAssets, decimals)}
+          symbol={symbol}
+          tooltip="Total assets the strategy managed - strategy.totalAssets()"
+        />
+        <StatCell
+          label="Balance (EVM)"
+          value={formatTokenAmount(strategy.evmBalance, decimals)}
+          symbol={symbol}
+          tooltip="The asset balance strategy contract is holding right now"
+        />
+        <StatCell
+          label="Cap"
+          value={formatTokenAmount(strategy.cap, decimals)}
+          symbol={symbol}
+          isBlocked={isBlocked}
+          tooltip="Maximum NAV the FundVault will allocate to this strategy. A cap of 0 blocked allocate to this strategy"
+        />
+      </div>
+
+      {/* Utilization */}
+      <div className="border-t border-neutral-100 px-4 py-3 dark:border-neutral-800">
+        <div className="mb-1.5 flex items-center justify-between">
+          <Tooltip
+            text="NAV ÷ Cap. Shows how close this strategy is to its allocation ceiling."
+            width="w-64"
+          >
+            <span className="text-xs text-neutral-500">Utilization</span>
+          </Tooltip>
+          <span className={`text-xs font-medium ${utilColor}`}>{utilization.toFixed(1)}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+          <div
+            className={`h-1.5 rounded-full transition-all ${barColor}`}
+            style={{ width: `${Math.min(utilization, 100)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Footer: flow totals */}
+      <div className="grid grid-cols-2 divide-x divide-neutral-100 rounded-b-lg border-t border-neutral-100 bg-neutral-50 dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-800/40">
+        <div className="px-4 py-2.5">
+          <p className="text-xs text-neutral-400">
+            <Tooltip
+              text="Lifetime cumulative amount pushed into this strategy via FundVault.allocate()."
+              width="w-64"
+            >
+              Allocated
+            </Tooltip>
+          </p>
+          <p className="mt-0.5 font-mono text-xs text-neutral-600 dark:text-neutral-300">
+            {formatTokenAmount(strategy.totalAllocated, decimals)}{' '}
+            <span className="text-neutral-400">{symbol}</span>
+          </p>
+        </div>
+        <div className="px-4 py-2.5">
+          <p className="text-xs text-neutral-400">
+            <Tooltip
+              text="Lifetime cumulative amount pulled out of this strategy via FundVault.deallocate()."
+              width="w-64"
+            >
+              Deallocated
+            </Tooltip>
+          </p>
+          <p className="mt-0.5 font-mono text-xs text-neutral-600 dark:text-neutral-300">
+            {formatTokenAmount(strategy.totalDeallocated, decimals)}{' '}
+            <span className="text-neutral-400">{symbol}</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
