@@ -151,12 +151,12 @@ export default function NavSummaryCards({ data }: Props) {
             }`}
           >
             <p className="text-sm text-neutral-500 dark:text-neutral-400">{card.label}</p>
-            <p className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-white">
+            <div className="mt-1 text-xl font-semibold tabular-nums text-neutral-900 dark:text-white">
               {card.value}
-            </p>
-            <p className={`mt-1 text-xs ${card.warn ? 'font-medium text-yellow-700 dark:text-yellow-400' : 'text-neutral-400 dark:text-neutral-500'}`}>
+            </div>
+            <div className={`mt-1 text-xs ${card.warn ? 'font-medium text-yellow-700 dark:text-yellow-400' : 'text-neutral-400 dark:text-neutral-500'}`}>
               {card.sub}
-            </p>
+            </div>
           </div>
         ))}
       </div>

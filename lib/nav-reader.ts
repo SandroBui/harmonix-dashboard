@@ -47,6 +47,16 @@ export type NavPageData = {
   // Stored (last updateNav()) values
   storedPps: string
   lastNavUpdated: string // seconds timestamp as string
+  // Fee context (from VaultManager)
+  managementFeeRate: string // WAD scale (1e18 = 100%/year)
+  performanceFeeRate: string // WAD scale (1e18 = 100%)
+  lastManagementHarvest: string // seconds timestamp as string ("0" = never)
+  lastPerformanceHarvest: string // seconds timestamp as string ("0" = never)
+  highWatermark: string // PPS scale (1e18) — "0" means uninitialized
+  feeReceiver: string // 0x... address
+  // Harvest previews (from HaVaultReader.previewHarvest*Fee)
+  managementFeePreview: { feeAmount: string; sharesToMint: string }
+  performanceFeePreview: { feeAmount: string; sharesToMint: string }
   // Aggregated vault totals (denomination scale, 1e18)
   totalClaimableNav: string
   totalPendingNav: string
@@ -76,7 +86,21 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
   }) as `0x${string}`
 
   // ── Batch 3: global state (all in parallel) ───────────────────────────────
-  const [navSnapshot, registeredAssets, storedPps, lastNavUpdatedValue, vaultOverviews] = await Promise.all([
+  const [
+    navSnapshot,
+    registeredAssets,
+    storedPps,
+    lastNavUpdatedValue,
+    vaultOverviews,
+    managementFeeRateValue,
+    performanceFeeRateValue,
+    lastManagementHarvestValue,
+    lastPerformanceHarvestValue,
+    highWatermarkValue,
+    feeReceiverValue,
+    managementFeePreviewTuple,
+    performanceFeePreviewTuple,
+  ] = await Promise.all([
     publicClient.readContract({
       address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
@@ -119,6 +143,46 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       navDenomination: bigint
       isPaused: boolean
     }[]>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'managementFeeRate',
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'performanceFeeRate',
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'lastManagementHarvest',
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'lastHarvestPerformanceFeeTime',
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'highWatermark',
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: vaultManagerAddress,
+      abi: VAULT_MANAGER_ABI,
+      functionName: 'feeReceiver',
+    }) as Promise<`0x${string}`>,
+    publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'previewHarvestManagementFee',
+    }) as Promise<readonly [bigint, bigint]>,
+    publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'previewHarvestPerformanceFee',
+    }) as Promise<readonly [bigint, bigint]>,
   ])
 
   // ── Batch 4: per-asset data (all in parallel) ─────────────────────────────
@@ -233,6 +297,20 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
     liveIsValidPps: navSnapshot.isValidPps,
     storedPps: storedPps.toString(),
     lastNavUpdated: lastNavUpdatedValue.toString(),
+    managementFeeRate: managementFeeRateValue.toString(),
+    performanceFeeRate: performanceFeeRateValue.toString(),
+    lastManagementHarvest: lastManagementHarvestValue.toString(),
+    lastPerformanceHarvest: lastPerformanceHarvestValue.toString(),
+    highWatermark: highWatermarkValue.toString(),
+    feeReceiver: feeReceiverValue.toLowerCase(),
+    managementFeePreview: {
+      feeAmount: managementFeePreviewTuple[0].toString(),
+      sharesToMint: managementFeePreviewTuple[1].toString(),
+    },
+    performanceFeePreview: {
+      feeAmount: performanceFeePreviewTuple[0].toString(),
+      sharesToMint: performanceFeePreviewTuple[1].toString(),
+    },
     totalClaimableNav,
     totalPendingNav,
     assets,

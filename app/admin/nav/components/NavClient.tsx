@@ -8,6 +8,8 @@ import type { NavPageData } from '@/lib/nav-reader'
 import RoleBanner from './RoleBanner'
 import NavSummaryCards from './NavSummaryCards'
 import UpdateNavSection from './UpdateNavSection'
+import HarvestManagementFeeSection from './HarvestManagementFeeSection'
+import HarvestPerformanceFeeSection from './HarvestPerformanceFeeSection'
 import AssetNavBreakdown from './AssetNavBreakdown'
 
 const AUTO_REFRESH_MS = 60_000
@@ -103,6 +105,18 @@ export default function NavClient({ data }: { data: NavPageData }) {
 
       {/* Update NAV action */}
       <UpdateNavSection
+        data={data}
+        canPropose={operator.canPropose}
+        isConnected={isConnected}
+      />
+
+      {/* Harvest fee actions (operator-gated) */}
+      <HarvestManagementFeeSection
+        data={data}
+        canPropose={operator.canPropose}
+        isConnected={isConnected}
+      />
+      <HarvestPerformanceFeeSection
         data={data}
         canPropose={operator.canPropose}
         isConnected={isConnected}

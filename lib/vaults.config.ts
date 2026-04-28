@@ -12,16 +12,6 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     },
   },
   {
-    slug: 'Old PreProd',
-    name: 'Old Preprod',
-    description: 'A deprecated main vault',
-    chainId: 999,
-    haVaultReaderAddress: '0x3a0B0E25BecEfcda10Ac367f4F3dc33060436f52',
-    safe: {
-      default: '0xcA42729a96EDA294f70Df05A47903aE0Af35F309',
-    },
-  },
-  {
     slug: 'staging',
     name: 'Staging Vault',
     description: 'Staging Harmonix vault on HyperEVM for mock token',
