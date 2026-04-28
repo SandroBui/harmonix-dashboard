@@ -6,6 +6,7 @@ import {
 import { TIMELOCKED_FUNCTIONS } from './timelocks-reader'
 import type { PendingOperation } from './timelocks-reader'
 import { getPublicClient } from './client'
+import { fetchAssetMetadataForAddresses } from './asset-metadata'
 import type { VaultGroupConfig } from './vault-group-config'
 
 export type FeeConfig = {
@@ -15,6 +16,14 @@ export type FeeConfig = {
   highWatermark: string       // WAD
   lastManagementHarvest: string   // unix timestamp
   lastHarvestPerformanceFeeTime: string // unix timestamp
+}
+
+export type VaultCapEntry = {
+  vault: string     // AssetVault address
+  asset: string     // underlying asset token address
+  symbol: string    // asset ERC-20 symbol
+  decimals: number  // asset ERC-20 decimals
+  cap: string       // raw asset units (0 means uncapped)
 }
 
 export type VaultConfigData = {
@@ -29,6 +38,7 @@ export type VaultConfigData = {
   feeConfig: FeeConfig
   deviationPps: string   // WAD
   maxNavStaleness: string // seconds
+  vaultCaps: VaultCapEntry[] // per-AssetVault deposit caps
   timelockDurations: Record<string, string> // fnName → seconds as string
   pendingOps: PendingOperation[]
   fetchedAt: number
@@ -68,6 +78,7 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
     feeConfigRaw,
     deviationPps,
     maxNavStaleness,
+    registeredAssets,
   ] = await Promise.all([
     publicClient.readContract({
       address: haVaultReaderAddress,
@@ -114,7 +125,57 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
       abi: HA_VAULT_READER_ABI,
       functionName: 'getMaxNavStaleness',
     }) as Promise<bigint>,
+    publicClient.readContract({
+      address: haVaultReaderAddress,
+      abi: HA_VAULT_READER_ABI,
+      functionName: 'getRegisteredAssets',
+    }) as Promise<readonly `0x${string}`[]>,
   ])
+
+  // ── Step 2b: per-asset vault address + cap, plus ERC-20 metadata ──────────
+  // The cap is keyed by AssetVault address, so we must resolve the vault for
+  // each asset first, then read the cap for each vault.
+  const assetList = [...registeredAssets]
+  const [vaultAddresses, assetMetadata] = assetList.length > 0
+    ? await Promise.all([
+        Promise.all(
+          assetList.map((asset) =>
+            publicClient.readContract({
+              address: haVaultReaderAddress,
+              abi: HA_VAULT_READER_ABI,
+              functionName: 'getVaultForAsset',
+              args: [asset],
+            }) as Promise<`0x${string}`>
+          ),
+        ),
+        fetchAssetMetadataForAddresses(assetList),
+      ])
+    : [[] as readonly `0x${string}`[], {} as Record<string, import('./vault-group-config').AssetMeta>]
+
+  const resolvedCaps = assetList.length > 0
+    ? await Promise.all(
+        vaultAddresses.map((vault) =>
+          publicClient.readContract({
+            address: haVaultReaderAddress,
+            abi: HA_VAULT_READER_ABI,
+            functionName: 'getVaultCap',
+            args: [vault],
+          }) as Promise<bigint>
+        ),
+      )
+    : []
+
+  const vaultCaps = assetList.map((asset, i) => {
+    const assetAddr = asset.toLowerCase()
+    const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
+    return {
+      vault: vaultAddresses[i].toLowerCase(),
+      asset: assetAddr,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      cap: (resolvedCaps[i] ?? 0n).toString(),
+    }
+  })
 
   // ── Step 3: read timelock durations for VaultManagerAdmin functions ────────
   const adminFns = TIMELOCKED_FUNCTIONS.filter((f) => f.contract === 'vaultManagerAdmin')
@@ -185,6 +246,7 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
     },
     deviationPps: deviationPps.toString(),
     maxNavStaleness: maxNavStaleness.toString(),
+    vaultCaps,
     timelockDurations,
     pendingOps,
     fetchedAt: Date.now(),

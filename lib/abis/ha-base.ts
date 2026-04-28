@@ -182,6 +182,17 @@ export const VAULT_MANAGER_ADMIN_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  // ── Non-timelocked admin: per-vault deposit cap ───────────────────────────
+  {
+    type: 'function',
+    name: 'setVaultCap',
+    inputs: [
+      { name: 'vault', type: 'address', internalType: 'address' },
+      { name: 'cap', type: 'uint256', internalType: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
   // ── Emergency: immediate (no timelock) ─────────────────────────────────────
   {
     type: 'function',

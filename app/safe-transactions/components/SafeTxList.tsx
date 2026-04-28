@@ -98,10 +98,19 @@ export default function SafeTxList({ transactions, vaultAssetMap }: Props) {
                 : 'border-neutral-200 dark:border-neutral-700'
             }`}
           >
-            {/* Summary row */}
-            <button
+            {/* Summary row — div+role to allow nested interactive children (CopyButton in SafeMetaBadge) */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={isExpanded}
               onClick={() => setExpandedHash(isExpanded ? null : tx.safeTxHash)}
-              className="flex w-full items-center gap-4 px-5 py-5 text-left hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setExpandedHash(isExpanded ? null : tx.safeTxHash)
+                }
+              }}
+              className="flex w-full items-center gap-4 px-5 py-5 text-left cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               {/* Nonce badge */}
               <span className="shrink-0 rounded-md bg-neutral-100 px-2.5 py-1 font-mono text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
@@ -176,7 +185,7 @@ export default function SafeTxList({ transactions, vaultAssetMap }: Props) {
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
-            </button>
+            </div>
 
             {/* Expanded detail */}
             {isExpanded && (

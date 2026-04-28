@@ -1092,6 +1092,44 @@ export const HA_VAULT_READER_ABI =
     "inputs": [
       {
         "internalType": "address",
+        "name": "vault",
+        "type": "address"
+      }
+    ],
+    "name": "getVaultCap",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "cap",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "getVaultForAsset",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "vault",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "strategy",
         "type": "address"
       }

@@ -4,14 +4,14 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
-import { decodeFunctionData, encodeFunctionData, getAddress, parseUnits } from 'viem'
+import { decodeFunctionData, encodeFunctionData, formatUnits, getAddress, parseUnits } from 'viem'
 import { HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import type { PendingOperation } from '@/lib/timelocks-reader'
 import { getVaultConfigData } from '@/lib/vault-config-reader'
 import { useVaultConfig } from '@/lib/vault-context'
-import type { VaultConfigData } from '@/lib/vault-config-reader'
+import type { VaultCapEntry, VaultConfigData } from '@/lib/vault-config-reader'
 import { useCountdown } from '@/lib/hooks/use-countdown'
 
 // ── Row definition ────────────────────────────────────────────────────────────
@@ -359,6 +359,177 @@ function Section({
   )
 }
 
+// ── Vault cap row (per AssetVault, non-timelocked) ───────────────────────────
+
+type VaultCapRowProps = {
+  entry: VaultCapEntry
+  vaultManagerAdminAddress: string
+  adminSafeAddress?: `0x${string}`
+  adminIsSafeOwner: boolean
+  adminHasRole: boolean
+}
+
+function formatCap(cap: string, decimals: number, symbol: string): string {
+  if (cap === '0') return 'No limit'
+  try {
+    return `${formatUnits(BigInt(cap), decimals)} ${symbol}`
+  } catch {
+    return `${cap} (raw)`
+  }
+}
+
+function VaultCapRow({
+  entry,
+  vaultManagerAdminAddress,
+  adminSafeAddress,
+  adminIsSafeOwner,
+  adminHasRole,
+}: VaultCapRowProps) {
+  const { isConnected, chainId } = useAccount()
+  const isWrongChain = isConnected && chainId !== 999
+  const proposeTx = useProposeSafeTransaction(adminSafeAddress)
+  const [open, setOpen] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+
+  const calldata = useMemo<`0x${string}` | null>(() => {
+    const trimmed = inputValue.trim()
+    if (!trimmed) return null
+    try {
+      const cap = parseUnits(trimmed, entry.decimals)
+      return encodeFunctionData({
+        abi: VAULT_MANAGER_ADMIN_ABI,
+        functionName: 'setVaultCap',
+        args: [getAddress(entry.vault), cap],
+      })
+    } catch {
+      return null
+    }
+  }, [inputValue, entry.vault, entry.decimals])
+
+  function handlePropose() {
+    if (!calldata) return
+    proposeTx.reset()
+    proposeTx.mutate({
+      to: vaultManagerAdminAddress as `0x${string}`,
+      data: calldata,
+    })
+  }
+
+  function handleCancel() {
+    setOpen(false)
+    setInputValue('')
+    proposeTx.reset()
+  }
+
+  let btnLabel = 'Propose via Safe'
+  let btnDisabled = false
+  let btnClass = 'bg-blue-600 text-white hover:bg-blue-700'
+  if (!isConnected) {
+    btnLabel = 'Connect wallet'; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (isWrongChain) {
+    btnLabel = 'Wrong network'; btnDisabled = true
+    btnClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
+  } else if (!adminIsSafeOwner) {
+    btnLabel = 'Not a Safe owner'; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!adminHasRole) {
+    btnLabel = 'No DEFAULT_ADMIN_ROLE'; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (proposeTx.isPending) {
+    btnLabel = 'Confirm in wallet...'; btnDisabled = true
+  } else if (proposeTx.isSuccess) {
+    btnLabel = 'Proposed'; btnDisabled = true
+    btnClass = 'bg-green-600 text-white cursor-not-allowed'
+  } else if (proposeTx.isError) {
+    btnLabel = 'Failed — Retry'
+    btnClass = 'bg-red-600 text-white hover:bg-red-700'
+  }
+
+  const display = formatCap(entry.cap, entry.decimals, entry.symbol)
+
+  return (
+    <div className="py-2.5">
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="text-sm text-neutral-500 dark:text-neutral-400">
+            Vault Cap · {entry.symbol}
+          </span>
+          <span
+            className="font-mono text-xs text-neutral-400 dark:text-neutral-500"
+            title={entry.vault}
+          >
+            {truncate(entry.vault)}
+          </span>
+        </div>
+        <span
+          className="shrink-0 text-sm tabular-nums text-neutral-900 dark:text-neutral-100"
+          title={`${entry.cap} (raw)`}
+        >
+          {display}
+        </span>
+        {!open && (
+          <button
+            onClick={() => setOpen(true)}
+            className="shrink-0 rounded px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-800">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder={`e.g. 1000000 (in ${entry.symbol}). 0 = no limit`}
+              value={inputValue}
+              onChange={(e) => { setInputValue(e.target.value); proposeTx.reset() }}
+              className="min-w-0 flex-1 rounded border border-neutral-300 bg-white px-2.5 py-1.5 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-900 dark:text-white"
+            />
+            <button
+              onClick={handlePropose}
+              disabled={btnDisabled || !calldata}
+              className={`shrink-0 rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                !calldata
+                  ? 'cursor-not-allowed bg-neutral-200 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500'
+                  : btnClass
+              }`}
+            >
+              {btnLabel}
+            </button>
+            <button
+              onClick={handleCancel}
+              className="shrink-0 rounded px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <p className="mt-1.5 text-xs text-neutral-400 dark:text-neutral-500">
+            Deposit cap in {entry.symbol} (decimals: {entry.decimals}). Enter <code className="font-mono">0</code> to remove the cap. Applied immediately — no timelock.
+          </p>
+
+          {proposeTx.isSuccess && (
+            <p className="mt-1.5 text-xs">
+              <Link href="/safe-transactions" className="text-blue-600 hover:underline dark:text-blue-400">
+                View in Safe Transactions →
+              </Link>
+            </p>
+          )}
+
+          {proposeTx.error && (
+            <p className="mt-1.5 truncate text-xs text-red-600 dark:text-red-400" title={proposeTx.error.message}>
+              {proposeTx.error.message}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Pending op card ───────────────────────────────────────────────────────────
 
 function decodeAdminOpCalldata(data: `0x${string}`): { fnName: string; args: string } {
@@ -672,7 +843,26 @@ export default function VaultConfigClient() {
 
       <Section title="Contract Addresses"    rows={CONTRACT_ADDRESS_ROWS} {...commonProps} />
       <Section title="Fee Configuration"     rows={FEE_CONFIG_ROWS}       {...commonProps} />
-      <Section title="NAV & Risk Parameters" rows={NAV_RISK_ROWS}         {...commonProps} />
+
+      {/* NAV & Risk: static rows + per-AssetVault deposit caps */}
+      <section>
+        <h2 className="mb-3 text-base font-semibold text-neutral-900 dark:text-white">NAV & Risk Parameters</h2>
+        <div className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white px-5 dark:divide-neutral-800 dark:border-neutral-700 dark:bg-neutral-900">
+          {NAV_RISK_ROWS.map((row) => (
+            <EditRow key={row.label} def={row} {...commonProps} />
+          ))}
+          {data.vaultCaps.map((entry) => (
+            <VaultCapRow
+              key={entry.vault}
+              entry={entry}
+              vaultManagerAdminAddress={data.vaultManagerAdminAddress}
+              adminSafeAddress={adminCheck.safeAddress}
+              adminIsSafeOwner={adminCheck.isSafeOwner}
+              adminHasRole={adminCheck.hasRole}
+            />
+          ))}
+        </div>
+      </section>
 
       {/* ── Pending Timelock Operations ───────────────────────────────── */}
       {data.pendingOps.length > 0 && (

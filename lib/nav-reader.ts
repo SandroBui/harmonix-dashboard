@@ -19,6 +19,10 @@ export type AssetNavData = {
   asset: string
   symbol: string
   decimals: number
+  // AssetVault address (one per registered asset)
+  vaultAddress: string
+  // Per-vault deposit cap in asset units. "0" means uncapped.
+  vaultCap: string
   // Stored per-asset NAV from last updateNav() call (denomination scale, 1e18)
   storedNav: string
   storedDenomination: string
@@ -188,7 +192,13 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
   // ── Batch 4: per-asset data (all in parallel) ─────────────────────────────
   const assetList = [...registeredAssets]
 
-  const [storedNavData, offChainNavs, categoriesPerAsset, assetMetadata] = assetList.length > 0
+  // Vault address per asset, taken from the already-fetched overviews. This
+  // avoids an extra round-trip for vaultForAsset().
+  const vaultByAsset = new Map(
+    (vaultOverviews as typeof vaultOverviews[number][]).map((v) => [v.asset.toLowerCase(), v.vault.toLowerCase()])
+  )
+
+  const [storedNavData, offChainNavs, categoriesPerAsset, assetMetadata, vaultCaps] = assetList.length > 0
     ? await Promise.all([
         // Stored per-asset navs and denominations from HaVaultReader
         Promise.all(
@@ -225,8 +235,21 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
         ),
         // ERC-20 symbol + decimals for each asset
         fetchAssetMetadataForAddresses(assetList),
+        // Per-AssetVault deposit cap (raw asset units; 0 means uncapped)
+        Promise.all(
+          assetList.map((asset) => {
+            const vault = vaultByAsset.get(asset.toLowerCase())
+            if (!vault) return Promise.resolve(0n)
+            return publicClient.readContract({
+              address: haVaultReaderAddress,
+              abi: HA_VAULT_READER_ABI,
+              functionName: 'getVaultCap',
+              args: [vault as `0x${string}`],
+            }) as Promise<bigint>
+          }),
+        ),
       ])
-    : [[], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
+    : [[], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>, []]
 
   // ── Aggregate claimable / pending in denomination units ───────────────────
   function assetsToDenomination(assets: bigint, navAsset: bigint, navDenomination: bigint): bigint {
@@ -273,10 +296,14 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       nav: cat.nav.toString(),
     }))
 
+    const cap = (vaultCaps as bigint[])[i] ?? 0n
+
     return {
       asset: assetAddr,
       symbol: meta.symbol,
       decimals: meta.decimals,
+      vaultAddress: (overview?.vault?.toLowerCase() ?? ''),
+      vaultCap: cap.toString(),
       storedNav: storedNav.toString(),
       storedDenomination: storedDenomination.toString(),
       offChainNav: offChainNav.toString(),
