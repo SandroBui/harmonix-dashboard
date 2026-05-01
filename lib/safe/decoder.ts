@@ -1,5 +1,5 @@
 import { decodeFunctionData, toFunctionSelector } from 'viem'
-import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI } from '@/lib/abis'
+import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI, HA_TIMELOCK_CONTROLLER_ABI } from '@/lib/abis'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
@@ -61,6 +61,7 @@ export async function decodeTransactionData(
     HA_BASE_ABI,
     VAULT_MANAGER_ADMIN_ABI,
     ACCESS_MANAGER_ABI,
+    HA_TIMELOCK_CONTROLLER_ABI,
     ERC20_ABI,
   ] as const
 
@@ -220,6 +221,33 @@ export function summarizeDecodedData(
     return `Deallocate ${amount} from strategy ${truncate(strategy)}`
   }
 
+  // ── HaTimelockController methods ────────────────────────────────────────
+  if (method === 'schedule') {
+    const target = parameters.find((p) => p.name === 'target')?.value ?? ''
+    const dataBytes = parameters.find((p) => p.name === 'data')?.value ?? ''
+    const delaySec = Number(parameters.find((p) => p.name === 'delay')?.value ?? '0')
+    const inner = decodeUpgradeInnerData(dataBytes)
+    const innerLabel = inner
+      ? `${inner.method}(${inner.parameters.map((p) => truncate(p.value)).join(', ')})`
+      : truncate(dataBytes)
+    return `Schedule timelock — ${innerLabel} on ${truncate(target)} (delay ${formatDuration(delaySec)})`
+  }
+
+  if (method === 'execute') {
+    const target = parameters.find((p) => p.name === 'target')?.value ?? ''
+    const payloadBytes = parameters.find((p) => p.name === 'payload')?.value ?? ''
+    const inner = decodeUpgradeInnerData(payloadBytes)
+    const innerLabel = inner
+      ? `${inner.method}(${inner.parameters.map((p) => truncate(p.value)).join(', ')})`
+      : truncate(payloadBytes)
+    return `Execute timelock — ${innerLabel} on ${truncate(target)}`
+  }
+
+  if (method === 'cancel') {
+    const id = parameters.find((p) => p.name === 'id')?.value ?? ''
+    return `Cancel timelock op ${truncate(id)}`
+  }
+
   // ── Timelock submit / revoke ────────────────────────────────────────────
   if (method === 'submit' || method === 'revoke') {
     const dataParam = parameters.find((p) => p.name === 'data')?.value ?? ''
@@ -314,6 +342,66 @@ export function summarizeDecodedData(
 
   // Generic fallback
   return `${method}(${parameters.map((p) => p.name).join(', ')})`
+}
+
+// ---------------------------------------------------------------------------
+// Schedule/execute inner-data decoder (timelocked upgrade payload)
+// ---------------------------------------------------------------------------
+
+const UPGRADE_INNER_ABIS = [
+  [
+    {
+      type: 'function',
+      name: 'upgradeToAndCall',
+      stateMutability: 'payable',
+      inputs: [
+        { name: 'newImplementation', type: 'address' },
+        { name: 'data', type: 'bytes' },
+      ],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'upgradeTo',
+      stateMutability: 'nonpayable',
+      inputs: [{ name: 'newImplementation', type: 'address' }],
+      outputs: [],
+    },
+  ],
+] as const
+
+/** Best-effort decode of a `data` payload scheduled/executed by the timelock. */
+export function decodeUpgradeInnerData(bytesHex: string): DataDecoded | null {
+  if (!bytesHex || bytesHex.length < 10) return null
+
+  for (const abi of UPGRADE_INNER_ABIS) {
+    try {
+      const { functionName, args } = decodeFunctionData({
+        abi: abi as never,
+        data: bytesHex as `0x${string}`,
+      })
+      const funcEntry = (
+        abi as readonly {
+          type: string
+          name?: string
+          inputs?: readonly { name: string; type: string }[]
+        }[]
+      ).find((item) => item.type === 'function' && item.name === functionName)
+
+      const parameters: DecodedParam[] = args
+        ? (args as unknown[]).map((value, i) => ({
+            name: funcEntry?.inputs?.[i]?.name ?? `param${i}`,
+            type: funcEntry?.inputs?.[i]?.type ?? 'unknown',
+            value: Array.isArray(value) ? JSON.stringify(value.map(String)) : String(value),
+          }))
+        : []
+
+      return { method: functionName, parameters }
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------

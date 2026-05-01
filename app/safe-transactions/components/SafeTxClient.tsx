@@ -29,7 +29,12 @@ function inferRoleFromMethod(method: string | undefined): RoleType | null {
     case 'updateNav':
       return 'operator'
     case 'submit':
+    case 'schedule':
       return 'timelock_proposer'
+    case 'execute':
+      return 'upgrade_executor'
+    case 'cancel':
+      return 'sentinel'
     case 'addNavCategory':
     case 'removeNavCategory':
     case 'setCategoryStatus':

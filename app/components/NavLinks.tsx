@@ -31,6 +31,7 @@ const NAV: NavEntry[] = [
     danger: true,
     items: [
       { href: '/timelocks', label: 'Timelocks' },
+      { href: '/upgrades', label: 'Upgrades' },
       { href: '/emergency', label: 'Emergency', danger: true },
     ],
   },

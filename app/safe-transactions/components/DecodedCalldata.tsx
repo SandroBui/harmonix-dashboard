@@ -3,7 +3,7 @@
 import type { DataDecoded, DecodedParam } from '@/lib/safe/types'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import { decodeSubmitInnerData, resolveSelector } from '@/lib/safe/decoder'
+import { decodeSubmitInnerData, decodeUpgradeInnerData, resolveSelector } from '@/lib/safe/decoder'
 
 type Props = {
   decoded: DataDecoded | null
@@ -26,8 +26,13 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
   }
 
   const isSubmitOrRevoke = decoded.method === 'submit' || decoded.method === 'revoke'
+  const isSchedule = decoded.method === 'schedule'
+  const isExecute = decoded.method === 'execute'
+  const innerParamName = isSubmitOrRevoke || isSchedule ? 'data' : isExecute ? 'payload' : null
   const innerDecoded = isSubmitOrRevoke
     ? decodeSubmitInnerData(decoded.parameters.find((p) => p.name === 'data')?.value ?? '')
+    : (isSchedule || isExecute) && innerParamName
+    ? decodeUpgradeInnerData(decoded.parameters.find((p) => p.name === innerParamName)?.value ?? '')
     : null
 
   return (
@@ -41,10 +46,10 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
       {/* Parameters */}
       <div className="space-y-1.5">
         {decoded.parameters.map((param, i) => {
-          if (isSubmitOrRevoke && param.name === 'data' && innerDecoded) {
+          if (innerParamName && param.name === innerParamName && innerDecoded) {
             return (
               <div key={i} className="flex items-start gap-2 text-xs">
-                <span className="w-32 shrink-0 text-neutral-500 dark:text-neutral-400">
+                <span className="w-32 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
                   {param.name}
                   <span className="ml-1 text-neutral-400 dark:text-neutral-500">({param.type})</span>
                 </span>
@@ -55,11 +60,11 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                   </p>
                   {innerDecoded.parameters.map((inner, j) => (
                     <div key={j} className="flex items-start gap-2 text-xs">
-                      <span className="w-28 shrink-0 text-neutral-500 dark:text-neutral-400">
+                      <span className="w-28 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
                         {inner.name}
                         <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                       </span>
-                      <span className="break-all font-mono text-neutral-700 dark:text-neutral-300">
+                      <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
                         {formatParamValue(inner.value, inner.type, to, innerDecoded.parameters, assetMetadata)}
                       </span>
                     </div>
@@ -71,11 +76,11 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
 
           return (
             <div key={i} className="flex items-start gap-2 text-xs">
-              <span className="w-32 shrink-0 text-neutral-500 dark:text-neutral-400">
+              <span className="w-32 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
                 {param.name}
                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({param.type})</span>
               </span>
-              <span className="break-all font-mono text-neutral-700 dark:text-neutral-300">
+              <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
                 {formatParamValue(param.value, param.type, to, decoded.parameters, assetMetadata)}
               </span>
             </div>

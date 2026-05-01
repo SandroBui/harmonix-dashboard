@@ -7,3 +7,4 @@ export {STRATEGY_ABI} from './strategy';
 export {HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI} from './ha-base';
 export {ACCESS_MANAGER_ABI} from './access-manager';
 export {HA_PORTFOLIO_MARGIN_ABI} from './ha-portfolio-margin';
+export {HA_TIMELOCK_CONTROLLER_ABI} from './ha-timelock-controller';
