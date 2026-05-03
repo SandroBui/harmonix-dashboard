@@ -153,7 +153,7 @@ async function fetchKnownContracts(
   const publicClient = getPublicClient()
 
   const readAddress = (
-    fn: 'getFundVault' | 'getShareToken' | 'getRequestManager' | 'getPriceFeed' | 'getAccessManager',
+    fn: 'getFundVault' | 'getShareToken' | 'getRequestManager' | 'getPriceFeed' | 'getAccessManager' | 'vaultManager' | 'getAdminFacet',
   ) =>
     (publicClient.readContract({
       address: haVaultReaderAddress,
@@ -167,6 +167,8 @@ async function fetchKnownContracts(
     requestManager,
     priceFeed,
     accessManager,
+    vaultManager,
+    vaultManagerAdmin,
     registeredAssets,
   ] = await Promise.all([
     readAddress('getFundVault'),
@@ -174,6 +176,8 @@ async function fetchKnownContracts(
     readAddress('getRequestManager'),
     readAddress('getPriceFeed'),
     readAddress('getAccessManager'),
+    readAddress('vaultManager'),
+    readAddress('getAdminFacet'),
     publicClient.readContract({
       address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
@@ -191,6 +195,8 @@ async function fetchKnownContracts(
     ['RequestManager', requestManager],
     ['PriceFeed', priceFeed],
     ['AccessManager', accessManager],
+    ['VaultManager', vaultManager],
+    ['VaultManagerAdmin', vaultManagerAdmin],
   ]
   for (const [name, addr] of coreEntries) {
     if (!addr || addr === ZERO_ADDRESS) continue

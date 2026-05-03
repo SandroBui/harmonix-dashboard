@@ -19,7 +19,7 @@ export type TimelockFunctionDef = {
   selector: `0x${string}`
   contract: ContractTarget
   abi: readonly object[]
-  args: 'address' | 'address_uint256' | 'uint256' | 'address_bytes4'
+  args: 'address' | 'address_uint256' | 'uint256' | 'address_bytes4' | 'address_uint128_uint128'
 }
 
 export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
@@ -158,6 +158,14 @@ export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
     contract: 'vaultManagerAdmin',
     abi: VAULT_MANAGER_ADMIN_ABI,
     args: 'address',
+  },
+  {
+    name: 'setAssetPriceBounds',
+    signature: 'setAssetPriceBounds(address,uint128,uint128)',
+    selector: toFunctionSelector('setAssetPriceBounds(address,uint128,uint128)'),
+    contract: 'vaultManagerAdmin',
+    abi: VAULT_MANAGER_ADMIN_ABI,
+    args: 'address_uint128_uint128',
   },
   {
     name: 'unpauseContract',

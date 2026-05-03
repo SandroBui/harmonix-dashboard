@@ -64,6 +64,16 @@ export const VAULT_MANAGER_ABI = [
     type: 'function',
   },
   {
+    inputs: [{ internalType: 'address', name: 'asset', type: 'address' }],
+    name: 'assetPriceBounds',
+    outputs: [
+      { internalType: 'uint128', name: 'minPrice', type: 'uint128' },
+      { internalType: 'uint128', name: 'maxPrice', type: 'uint128' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'address', name: 'haContract', type: 'address' }],
     name: 'pauseStatus',
     outputs: [{ internalType: 'bool', name: 'isPaused', type: 'bool' }],

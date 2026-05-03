@@ -26,6 +26,14 @@ export type VaultCapEntry = {
   cap: string       // raw asset units (0 means uncapped)
 }
 
+export type AssetPriceBoundsEntry = {
+  asset: string     // underlying token address (lowercase)
+  symbol: string
+  decimals: number  // ERC-20 decimals (bounds themselves are always 1e18-scaled)
+  minPrice: string  // raw 1e18 value; '0' = disabled
+  maxPrice: string  // raw 1e18 value; '0' = disabled
+}
+
 export type VaultConfigData = {
   vaultManagerAddress: string
   vaultManagerAdminAddress: string
@@ -39,6 +47,7 @@ export type VaultConfigData = {
   deviationPps: string   // WAD
   maxNavStaleness: string // seconds
   vaultCaps: VaultCapEntry[] // per-AssetVault deposit caps
+  assetPriceBounds: AssetPriceBoundsEntry[] // per-asset price depeg guard bands
   timelockDurations: Record<string, string> // fnName → seconds as string
   pendingOps: PendingOperation[]
   fetchedAt: number
@@ -177,6 +186,32 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
     }
   })
 
+  // ── Step 2c: per-asset price depeg guard bands ────────────────────────────
+  const resolvedBounds = assetList.length > 0
+    ? await Promise.all(
+        assetList.map((asset) =>
+          publicClient.readContract({
+            address: vaultManagerAddress,
+            abi: VAULT_MANAGER_ABI,
+            functionName: 'assetPriceBounds',
+            args: [asset],
+          }) as Promise<readonly [bigint, bigint]>
+        ),
+      )
+    : []
+
+  const assetPriceBounds = assetList.map((asset, i) => {
+    const assetAddr = asset.toLowerCase()
+    const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
+    return {
+      asset: assetAddr,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      minPrice: (resolvedBounds[i]?.[0] ?? 0n).toString(),
+      maxPrice: (resolvedBounds[i]?.[1] ?? 0n).toString(),
+    }
+  })
+
   // ── Step 3: read timelock durations for VaultManagerAdmin functions ────────
   const adminFns = TIMELOCKED_FUNCTIONS.filter((f) => f.contract === 'vaultManagerAdmin')
 
@@ -247,6 +282,7 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
     deviationPps: deviationPps.toString(),
     maxNavStaleness: maxNavStaleness.toString(),
     vaultCaps,
+    assetPriceBounds,
     timelockDurations,
     pendingOps,
     fetchedAt: Date.now(),

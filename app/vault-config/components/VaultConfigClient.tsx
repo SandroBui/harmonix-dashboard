@@ -11,7 +11,7 @@ import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import type { PendingOperation } from '@/lib/timelocks-reader'
 import { getVaultConfigData } from '@/lib/vault-config-reader'
 import { useVaultConfig } from '@/lib/vault-context'
-import type { VaultCapEntry, VaultConfigData } from '@/lib/vault-config-reader'
+import type { AssetPriceBoundsEntry, VaultCapEntry, VaultConfigData } from '@/lib/vault-config-reader'
 import { useCountdown } from '@/lib/hooks/use-countdown'
 
 // ── Row definition ────────────────────────────────────────────────────────────
@@ -530,6 +530,245 @@ function VaultCapRow({
   )
 }
 
+// ── Asset price bounds row (per registered asset, conditionally timelocked) ──
+
+function formatBoundsForDisplay(minPrice: string, maxPrice: string): string {
+  const fmt = (raw: string) => {
+    try { return `$${formatUnits(BigInt(raw), 18)}` } catch { return raw }
+  }
+  const minZero = !minPrice || minPrice === '0'
+  const maxZero = !maxPrice || maxPrice === '0'
+  if (minZero && maxZero) return 'No bounds'
+  if (minZero) return `max: ${fmt(maxPrice)}`
+  if (maxZero) return `min: ${fmt(minPrice)}`
+  return `${fmt(minPrice)} – ${fmt(maxPrice)}`
+}
+
+type AssetPriceBoundsRowProps = {
+  entry: AssetPriceBoundsEntry
+  vaultManagerAdminAddress: string
+  timelockDurationSeconds: number
+  pendingOps: PendingOperation[]
+  adminSafeAddress?: `0x${string}`
+  adminIsSafeOwner: boolean
+  adminHasRole: boolean
+  timelockSafeAddress?: `0x${string}`
+  timelockIsSafeOwner: boolean
+  timelockHasRole: boolean
+}
+
+function AssetPriceBoundsRow({
+  entry,
+  vaultManagerAdminAddress,
+  timelockDurationSeconds,
+  pendingOps,
+  adminSafeAddress,
+  adminIsSafeOwner,
+  adminHasRole,
+  timelockSafeAddress,
+  timelockIsSafeOwner,
+  timelockHasRole,
+}: AssetPriceBoundsRowProps) {
+  const { isConnected, chainId } = useAccount()
+  const isWrongChain = isConnected && chainId !== 999
+
+  const isTimelocked = timelockDurationSeconds > 0
+  const safeAddress = isTimelocked ? timelockSafeAddress : adminSafeAddress
+  const isSafeOwner = isTimelocked ? timelockIsSafeOwner : adminIsSafeOwner
+  const hasRole = isTimelocked ? timelockHasRole : adminHasRole
+  const roleLabel = isTimelocked ? 'TIMELOCK_PROPOSER_ROLE' : 'DEFAULT_ADMIN_ROLE'
+
+  const proposeTx = useProposeSafeTransaction(safeAddress)
+  const [open, setOpen] = useState(false)
+  const [minInput, setMinInput] = useState('')
+  const [maxInput, setMaxInput] = useState('')
+
+  function rawToInput(raw: string): string {
+    if (!raw || raw === '0') return ''
+    try { return formatUnits(BigInt(raw), 18) } catch { return '' }
+  }
+
+  function handleOpen() {
+    setMinInput(rawToInput(entry.minPrice))
+    setMaxInput(rawToInput(entry.maxPrice))
+    proposeTx.reset()
+    setOpen(true)
+  }
+
+  const pendingOp = isTimelocked
+    ? pendingOps.find((op) => {
+        if (op.fnName !== 'setAssetPriceBounds') return false
+        const decoded = decodeAdminOpCalldata(op.data as `0x${string}`)
+        return decoded.args.toLowerCase().includes(entry.asset.toLowerCase())
+      })
+    : undefined
+
+  const calldata = useMemo<`0x${string}` | null>(() => {
+    const minStr = minInput.trim()
+    const maxStr = maxInput.trim()
+    if (!minStr && !maxStr) return null
+    try {
+      const min = minStr === '' || minStr === '0' ? 0n : parseUnits(minStr, 18)
+      const max = maxStr === '' || maxStr === '0' ? 0n : parseUnits(maxStr, 18)
+      const uint128Max = (1n << 128n) - 1n
+      if (min > uint128Max || max > uint128Max) return null
+      if (min !== 0n && max !== 0n && min > max) return null
+      const inner = encodeFunctionData({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        abi: VAULT_MANAGER_ADMIN_ABI as any,
+        functionName: 'setAssetPriceBounds',
+        args: [getAddress(entry.asset), min, max],
+      })
+      if (!isTimelocked) return inner
+      return encodeFunctionData({
+        abi: HA_BASE_ABI,
+        functionName: 'submit',
+        args: [inner],
+      })
+    } catch {
+      return null
+    }
+  }, [minInput, maxInput, entry.asset, isTimelocked])
+
+  function handlePropose() {
+    if (!calldata) return
+    proposeTx.reset()
+    proposeTx.mutate({ to: vaultManagerAdminAddress as `0x${string}`, data: calldata })
+  }
+
+  function handleCancel() {
+    setOpen(false)
+    setMinInput('')
+    setMaxInput('')
+    proposeTx.reset()
+  }
+
+  let btnLabel = 'Propose via Safe'
+  let btnDisabled = false
+  let btnClass = 'bg-blue-600 text-white hover:bg-blue-700'
+  if (!isConnected) {
+    btnLabel = 'Connect wallet'; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (isWrongChain) {
+    btnLabel = 'Wrong network'; btnDisabled = true
+    btnClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
+  } else if (!isSafeOwner) {
+    btnLabel = 'Not a Safe owner'; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!hasRole) {
+    btnLabel = `No ${roleLabel}`; btnDisabled = true
+    btnClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (proposeTx.isPending) {
+    btnLabel = 'Confirm in wallet...'; btnDisabled = true
+  } else if (proposeTx.isSuccess) {
+    btnLabel = 'Proposed'; btnDisabled = true
+    btnClass = 'bg-green-600 text-white cursor-not-allowed'
+  } else if (proposeTx.isError) {
+    btnLabel = 'Failed — Retry'
+    btnClass = 'bg-red-600 text-white hover:bg-red-700'
+  }
+
+  const display = formatBoundsForDisplay(entry.minPrice, entry.maxPrice)
+
+  return (
+    <div className="py-2.5">
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="text-sm text-neutral-500 dark:text-neutral-400">
+            Price Bounds · {entry.symbol}
+          </span>
+          <span className="font-mono text-xs text-neutral-400 dark:text-neutral-500" title={entry.asset}>
+            {truncate(entry.asset)}
+          </span>
+          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            Timelocked{timelockDurationSeconds > 0 ? ` · ${formatDuration(timelockDurationSeconds)}` : ''}
+          </span>
+        </div>
+        <span className="shrink-0 text-sm tabular-nums text-neutral-900 dark:text-neutral-100">
+          {display}
+        </span>
+        {!open && (
+          <button
+            onClick={handleOpen}
+            className="shrink-0 rounded px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-800">
+          {pendingOp && (
+            <div className={`mb-3 rounded px-2.5 py-1.5 text-xs ${
+              pendingOp.isReady
+                ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
+            }`}>
+              Pending: {pendingOp.isReady ? 'Ready to execute' : formatCountdown(pendingOp.executableAt)}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Min price, e.g. 0.99 (0 = disabled)"
+              value={minInput}
+              onChange={(e) => { setMinInput(e.target.value); proposeTx.reset() }}
+              className="min-w-0 flex-1 rounded border border-neutral-300 bg-white px-2.5 py-1.5 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-900 dark:text-white"
+            />
+            <input
+              type="text"
+              placeholder="Max price, e.g. 1.01 (0 = disabled)"
+              value={maxInput}
+              onChange={(e) => { setMaxInput(e.target.value); proposeTx.reset() }}
+              className="min-w-0 flex-1 rounded border border-neutral-300 bg-white px-2.5 py-1.5 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-900 dark:text-white"
+            />
+            <button
+              onClick={handlePropose}
+              disabled={btnDisabled || !calldata}
+              className={`shrink-0 rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                !calldata
+                  ? 'cursor-not-allowed bg-neutral-200 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500'
+                  : btnClass
+              }`}
+            >
+              {btnLabel}
+            </button>
+            <button
+              onClick={handleCancel}
+              className="shrink-0 rounded px-2.5 py-1.5 text-xs font-medium text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <p className="mt-1.5 text-xs text-neutral-400 dark:text-neutral-500">
+            Prices in USD (1e18 scale internally). Leave a side empty or enter <code className="font-mono">0</code> to disable that side. Both 0 disables the check entirely.
+            {isTimelocked
+              ? ` Will queue via submit() — executable after ${formatDuration(timelockDurationSeconds)} delay.`
+              : ' Applied immediately — no timelock configured.'}
+          </p>
+
+          {proposeTx.isSuccess && (
+            <p className="mt-1.5 text-xs">
+              <Link href="/safe-transactions" className="text-blue-600 hover:underline dark:text-blue-400">
+                View in Safe Transactions →
+              </Link>
+            </p>
+          )}
+
+          {proposeTx.error && (
+            <p className="mt-1.5 truncate text-xs text-red-600 dark:text-red-400" title={proposeTx.error.message}>
+              {proposeTx.error.message}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Pending op card ───────────────────────────────────────────────────────────
 
 function decodeAdminOpCalldata(data: `0x${string}`): { fnName: string; args: string } {
@@ -859,6 +1098,21 @@ export default function VaultConfigClient() {
               adminSafeAddress={adminCheck.safeAddress}
               adminIsSafeOwner={adminCheck.isSafeOwner}
               adminHasRole={adminCheck.hasRole}
+            />
+          ))}
+          {data.assetPriceBounds.map((entry) => (
+            <AssetPriceBoundsRow
+              key={`bounds-${entry.asset}`}
+              entry={entry}
+              vaultManagerAdminAddress={data.vaultManagerAdminAddress}
+              timelockDurationSeconds={Number(data.timelockDurations['setAssetPriceBounds'] ?? '0')}
+              pendingOps={data.pendingOps}
+              adminSafeAddress={adminCheck.safeAddress}
+              adminIsSafeOwner={adminCheck.isSafeOwner}
+              adminHasRole={adminCheck.hasRole}
+              timelockSafeAddress={timelockProposerCheck.safeAddress}
+              timelockIsSafeOwner={timelockProposerCheck.isSafeOwner}
+              timelockHasRole={timelockProposerCheck.hasRole}
             />
           ))}
         </div>

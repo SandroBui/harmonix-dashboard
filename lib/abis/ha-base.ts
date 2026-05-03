@@ -182,6 +182,18 @@ export const VAULT_MANAGER_ADMIN_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  // ── Timelocked: per-asset price depeg guard band ─────────────────────────
+  {
+    type: 'function',
+    name: 'setAssetPriceBounds',
+    inputs: [
+      { name: 'asset',    type: 'address', internalType: 'address' },
+      { name: 'minPrice', type: 'uint128', internalType: 'uint128' },
+      { name: 'maxPrice', type: 'uint128', internalType: 'uint128' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
   // ── Non-timelocked admin: per-vault deposit cap ───────────────────────────
   {
     type: 'function',
