@@ -121,18 +121,23 @@ export function summarizeDecodedData(
   const { method, parameters } = decoded
 
   if (method === 'fulfillRedeem') {
-    const totalAmount = parameters.find((p) => p.name === 'totalAmount')
+    // v0.6.0: signature is fulfillRedeem(address[] controllers) — totalAmount is no longer
+    // an input. AsyncRequestManager computes the exact pull from the controllers' requests.
     const controllers = parameters.find((p) => p.name === 'controllers')
-    const tokenAddr = vaultAssetMap?.[to.toLowerCase()]
-    const assetMeta = tokenAddr ? assetMetadata[tokenAddr] : assetMetadata[to.toLowerCase()]
-    const formatted = assetMeta && totalAmount
-      ? formatAmount(totalAmount.value, assetMeta.decimals) + ' ' + assetMeta.symbol
-      : (totalAmount?.value ?? '?')
     let count: number | string = '?'
     try {
       count = (JSON.parse(controllers?.value ?? '[]') as string[]).length
     } catch { /* not a JSON array */ }
-    return `Fulfill ${count} withdrawal(s) — ${formatted}`
+    return `Fulfill ${count} withdrawal(s)`
+  }
+
+  if (method === 'cancelRedeem') {
+    const controllers = parameters.find((p) => p.name === 'controllers')
+    let count: number | string = '?'
+    try {
+      count = (JSON.parse(controllers?.value ?? '[]') as string[]).length
+    } catch { /* not a JSON array */ }
+    return `Cancel ${count} redeem request(s)`
   }
 
   if (method === 'transfer') {

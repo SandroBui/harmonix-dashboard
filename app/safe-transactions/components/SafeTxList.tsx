@@ -24,7 +24,6 @@ function isRejectionTx(tx: RoleTaggedTx): boolean {
 const ROLE_BADGE_COLORS: Record<RoleType, string> = {
   operator:           'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   curator:            'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  price_updater:      'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
   timelock_proposer:  'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
   admin:              'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',
   sentinel:           'bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300',

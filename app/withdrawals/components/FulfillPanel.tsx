@@ -53,7 +53,9 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, hasOpe
   const assetAddr = vaultAssetMap[selected[0].vault]
   const meta = assetAddr ? assetMetadata?.[assetAddr] : undefined
 
-  const totalAmount = selected.reduce((sum, w) => sum + BigInt(w.assets), 0n)
+  // Estimated outflow for the UI summary only — the new fulfillRedeem signature is
+  // controllers-only; AsyncRequestManager computes and pulls the exact amount.
+  const estimatedOutflow = selected.reduce((sum, w) => sum + BigInt(w.assets), 0n)
   const controllers = selected.map((w) => getAddress(w.controller) as `0x${string}`)
 
   const isWrongChain = isConnected && chainId !== 999
@@ -66,7 +68,7 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, hasOpe
     const data = encodeFunctionData({
       abi: VAULT_ASSET_ABI,
       functionName: 'fulfillRedeem',
-      args: [totalAmount, controllers],
+      args: [controllers],
     })
     proposeTx.mutate({ to: vaultAddress, data })
   }
@@ -117,9 +119,9 @@ export default function FulfillPanel({ selected, vaultAssetMap, safeInfo, hasOpe
           </span>
           <span className="text-neutral-400">·</span>
           <span className="text-neutral-600 dark:text-neutral-300">
-            Total:{' '}
+            Est. outflow:{' '}
             <span className="font-medium text-neutral-900 dark:text-white">
-              {meta ? formatUnits(totalAmount.toString(), meta.decimals) : totalAmount.toString()}
+              {meta ? formatUnits(estimatedOutflow.toString(), meta.decimals) : estimatedOutflow.toString()}
               {meta && <span className="ml-1 text-neutral-500">{meta.symbol}</span>}
             </span>
           </span>

@@ -6,19 +6,9 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     name: 'Main Vault',
     description: 'Primary Harmonix vault on HyperEVM',
     chainId: 999,
-    haVaultReaderAddress: '0x56A796C1cDb02Ed4da713527edf30cE75D5a9E4c',
+    haVaultReaderAddress: '0x6402EB27609eef6FE243fAB5909518C55cb8B644',
     safe: {
       default: '0xF0dAE819dB18b4F847306dD2649B39Da819d3DdF',
-    },
-  },
-  {
-    slug: 'staging',
-    name: 'Staging Vault',
-    description: 'Staging Harmonix vault on HyperEVM for mock token',
-    chainId: 999,
-    haVaultReaderAddress: '0x66341e783529c0837Ab16791E031E109d9046fE9',
-    safe: {
-      default: '0x92493f39dbC498fd7347781eF956d21d4DaCCE75',
     },
   },
 ]

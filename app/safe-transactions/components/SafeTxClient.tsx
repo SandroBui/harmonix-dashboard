@@ -61,29 +61,25 @@ function useAllRoleTxs(vaultAssetMap: Record<string, string>): {
   const { data: resolved } = useResolvedRoleSafes()
   const addrOperator          = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
   const addrCurator           = getResolvedSafeAddressForRole(config, 'curator', resolved?.resolvedSafes)
-  const addrPriceUpdater      = getResolvedSafeAddressForRole(config, 'price_updater', resolved?.resolvedSafes)
   const addrTimelockProposer  = getResolvedSafeAddressForRole(config, 'timelock_proposer', resolved?.resolvedSafes)
   const addrAdmin             = getResolvedSafeAddressForRole(config, 'admin', resolved?.resolvedSafes)
 
   const qOperator          = usePendingSafeTransactions(addrOperator,          vaultAssetMap)
   const qCurator           = usePendingSafeTransactions(addrCurator,           vaultAssetMap)
-  const qPriceUpdater      = usePendingSafeTransactions(addrPriceUpdater,      vaultAssetMap)
   const qTimelockProposer  = usePendingSafeTransactions(addrTimelockProposer,  vaultAssetMap)
   const qAdmin             = usePendingSafeTransactions(addrAdmin,             vaultAssetMap)
 
   const sOperator          = useSafeInfo(addrOperator)
   const sCurator           = useSafeInfo(addrCurator)
-  const sPriceUpdater      = useSafeInfo(addrPriceUpdater)
   const sTimelockProposer  = useSafeInfo(addrTimelockProposer)
   const sAdmin             = useSafeInfo(addrAdmin)
 
-  const isLoading = qOperator.isLoading || qCurator.isLoading || qPriceUpdater.isLoading || qTimelockProposer.isLoading || qAdmin.isLoading
-  const hasError  = Boolean(qOperator.error || qCurator.error || qPriceUpdater.error || qTimelockProposer.error || qAdmin.error)
+  const isLoading = qOperator.isLoading || qCurator.isLoading || qTimelockProposer.isLoading || qAdmin.isLoading
+  const hasError  = Boolean(qOperator.error || qCurator.error || qTimelockProposer.error || qAdmin.error)
 
   function refetchAll() {
     qOperator.refetch()
     qCurator.refetch()
-    qPriceUpdater.refetch()
     qTimelockProposer.refetch()
     qAdmin.refetch()
   }
@@ -92,7 +88,6 @@ function useAllRoleTxs(vaultAssetMap: Record<string, string>): {
   const entries: [RoleType, `0x${string}`, PendingSafeTx[] | undefined, SafeInfo | undefined][] = [
     ['operator',           addrOperator,         qOperator.data          as PendingSafeTx[] | undefined, sOperator.data          as SafeInfo | undefined],
     ['curator',            addrCurator,          qCurator.data           as PendingSafeTx[] | undefined, sCurator.data           as SafeInfo | undefined],
-    ['price_updater',      addrPriceUpdater,     qPriceUpdater.data      as PendingSafeTx[] | undefined, sPriceUpdater.data      as SafeInfo | undefined],
     ['timelock_proposer',  addrTimelockProposer, qTimelockProposer.data  as PendingSafeTx[] | undefined, sTimelockProposer.data  as SafeInfo | undefined],
     ['admin',              addrAdmin,            qAdmin.data             as PendingSafeTx[] | undefined, sAdmin.data             as SafeInfo | undefined],
   ]

@@ -115,6 +115,7 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       effNavDenomination: bigint
       globalRedeemShares: bigint
       assetTotalNavs: readonly bigint[]
+      assetEffNavDenoms: readonly bigint[]
       ppsValue: bigint
       isValidPps: boolean
     }>,
@@ -141,8 +142,8 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       vault: `0x${string}`
       asset: `0x${string}`
       redeemShares: bigint
-      claimableAssets: bigint
-      pendingAssets: bigint
+      claimableDenom: bigint
+      pendingDenom: bigint
       navAsset: bigint
       navDenomination: bigint
       isPaused: boolean
@@ -251,16 +252,17 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       ])
     : [[], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>, []]
 
-  // ── Aggregate claimable / pending in denomination units ───────────────────
+  // ── Aggregate claimable / pending — already WAD-denom per v0.6.0 ──────────
+  // offChainNav is still asset-units, so it keeps the ratio conversion below.
   function assetsToDenomination(assets: bigint, navAsset: bigint, navDenomination: bigint): bigint {
     if (assets === 0n || navAsset === 0n) return 0n
     return (assets * navDenomination) / navAsset
   }
   const totalClaimableNav = vaultOverviews
-    .reduce((sum, v) => sum + assetsToDenomination(v.claimableAssets, v.navAsset, v.navDenomination), 0n)
+    .reduce((sum, v) => sum + v.claimableDenom, 0n)
     .toString()
   const totalPendingNav = vaultOverviews
-    .reduce((sum, v) => sum + assetsToDenomination(v.pendingAssets, v.navAsset, v.navDenomination), 0n)
+    .reduce((sum, v) => sum + v.pendingDenom, 0n)
     .toString()
 
   // ── Assemble per-asset data ───────────────────────────────────────────────
@@ -280,11 +282,10 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
     const navAsset = overview?.navAsset ?? storedNav
     const navDenom  = overview?.navDenomination ?? storedDenomination
 
-    const claimable = overview?.claimableAssets ?? 0n
-    const pending   = overview?.pendingAssets   ?? 0n
-
-    const claimableDenomination = assetsToDenomination(claimable, navAsset, navDenom)
-    const pendingDenomination   = assetsToDenomination(pending,   navAsset, navDenom)
+    // Per v0.6.0: claimable/pending are already in WAD denom — no ratio conversion needed.
+    const claimableDenomination = overview?.claimableDenom ?? 0n
+    const pendingDenomination   = overview?.pendingDenom   ?? 0n
+    // offChainNav from FundNavFeed.fundNavValue() is still in asset units, so keep the ratio path.
     const offChainDenomination  = assetsToDenomination(offChainNav, navAsset, navDenom)
 
     const effectiveRaw = storedDenomination - claimableDenomination - pendingDenomination

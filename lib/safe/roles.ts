@@ -4,7 +4,6 @@ import type { VaultGroupConfig, SafeAddresses } from '@/lib/vault-group-config'
 export type RoleType =
   | 'operator'
   | 'curator'
-  | 'price_updater'
   | 'timelock_proposer'
   | 'admin'
   | 'sentinel'
@@ -14,7 +13,6 @@ export type RoleType =
 export const DYNAMIC_SAFE_ROLES = [
   'operator',
   'curator',
-  'price_updater',
   'timelock_proposer',
   'admin',
 ] as const
@@ -27,7 +25,6 @@ export type ResolvedRoleSafes = Partial<Record<DynamicSafeRole, `0x${string}`>>
 export const ROLE_HASHES: Record<RoleType, `0x${string}`> = {
   operator: keccak256(toHex('OPERATOR_ROLE')),
   curator: keccak256(toHex('CURATOR_ROLE')),
-  price_updater: keccak256(toHex('PRICE_UPDATER_ROLE')),
   timelock_proposer: keccak256(toHex('TIMELOCK_PROPOSER_ROLE')),
   admin: '0x0000000000000000000000000000000000000000000000000000000000000000', // DEFAULT_ADMIN_ROLE = bytes32(0)
   sentinel: keccak256(toHex('SENTINEL_ROLE')),
@@ -38,7 +35,6 @@ export const ROLE_HASHES: Record<RoleType, `0x${string}`> = {
 export const ROLE_LABELS: Record<RoleType, string> = {
   operator: 'Operator',
   curator: 'Curator',
-  price_updater: 'Price Updater',
   timelock_proposer: 'Timelock Proposer',
   admin: 'Admin',
   sentinel: 'Sentinel',
@@ -47,9 +43,8 @@ export const ROLE_LABELS: Record<RoleType, string> = {
 }
 
 export const ROLE_DESCRIPTIONS: Record<RoleType, string> = {
-  operator: 'Fulfills and cancels withdrawal requests from the redemption queue, and triggers on-chain NAV updates.',
+  operator: 'Fulfills and cancels withdrawal requests, triggers on-chain NAV updates, and pushes per-category NAV values via syncNavValue.',
   curator: 'Adds/removes strategies, sets allocation caps, and deploys capital.',
-  price_updater: 'Configures oracle and token price feed settings.',
   timelock_proposer: 'Submits time-locked operations on the vault.',
   admin: 'Full administrative control: manages roles, NAV categories, and core configuration.',
   sentinel: 'Monitors the system and can revoke time-locked operations and trigger protective actions when anomalies are detected.',
@@ -61,7 +56,6 @@ export const ROLE_DESCRIPTIONS: Record<RoleType, string> = {
 const ROLE_TO_SAFE_KEY: Record<RoleType, keyof SafeAddresses> = {
   operator: 'operator',
   curator: 'curator',
-  price_updater: 'priceUpdater',
   timelock_proposer: 'timelockProposer',
   admin: 'admin',
   sentinel: 'admin',

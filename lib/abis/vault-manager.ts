@@ -1,15 +1,17 @@
 export const VAULT_MANAGER_ABI = [
   {
     inputs: [],
-    name: 'PRICE_UPDATER_ROLE',
+    name: 'DEFAULT_ADMIN_ROLE',
     outputs: [{ internalType: 'bytes32', name: '', type: 'bytes32' }],
     stateMutability: 'view',
     type: 'function',
   },
+  // WAD-denom counter for fundVault holdings of `asset` — NOT an ERC-20 balance.
+  // Mirrors the value the on-chain NAV math consumes via VaultManager.balanceOf(asset).
   {
-    inputs: [],
-    name: 'DEFAULT_ADMIN_ROLE',
-    outputs: [{ internalType: 'bytes32', name: '', type: 'bytes32' }],
+    inputs: [{ internalType: 'address', name: 'asset', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     stateMutability: 'view',
     type: 'function',
   },
@@ -31,6 +33,7 @@ export const VAULT_MANAGER_ABI = [
           { internalType: 'uint256', name: 'effNavDenomination', type: 'uint256' },
           { internalType: 'uint256', name: 'globalRedeemShares', type: 'uint256' },
           { internalType: 'uint256[]', name: 'assetTotalNavs', type: 'uint256[]' },
+          { internalType: 'uint256[]', name: 'assetEffNavDenoms', type: 'uint256[]' },
           { internalType: 'uint256', name: 'ppsValue', type: 'uint256' },
           { internalType: 'bool', name: 'isValidPps', type: 'bool' },
         ],

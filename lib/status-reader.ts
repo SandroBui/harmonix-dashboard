@@ -1,4 +1,4 @@
-import { HA_VAULT_READER_ABI, FUND_NAV_FEED_ABI } from './contracts'
+import { HA_VAULT_READER_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI } from './contracts'
 import { getPublicClient } from './client'
 import { getAllWithdrawals } from './vault-reader'
 import { fetchAssetMetadataForAddresses } from './asset-metadata'
@@ -27,14 +27,16 @@ export type VaultOverviewData = {
   asset: string
   symbol: string
   decimals: number
-  // Redemption state
+  // Redemption state — both in WAD denom (1e18, USD), per v0.6.0
   redeemShares: string
-  claimableAssets: string
-  pendingAssets: string
-  // Current asset token balance held by the vault contract
+  claimableDenom: string
+  pendingDenom: string
+  // Current asset token balance held by the vault contract (asset units)
   vaultAssetBalance: string
-  // Current asset token balance held by the FundVault contract
+  // Current asset token balance held by the FundVault contract (asset units, live ERC-20 balanceOf)
   fundVaultBalance: string
+  // VaultManager.balanceOf(asset) — WAD-denom counter (BALANCE_OF[asset]), what NAV math actually consumes
+  vaultManagerBalanceOfDenom: string
   // NAV value reported by the FundNavFeed contract per asset
   fundNavBalance: string
   // NAV
@@ -55,6 +57,7 @@ export type NavSnapshotData = {
   effNavDenomination: string
   globalRedeemShares: string
   assetTotalNavs: string[]
+  assetEffNavDenoms: string[]
   ppsValue: string
   isValidPps: boolean
 }
@@ -62,12 +65,13 @@ export type NavSnapshotData = {
 export type FundStatusData = {
   vaults: VaultOverviewData[]
   navSnapshot: NavSnapshotData
+  vaultManagerAddress: string
   redeemQueueLength: number
   redeemMode: number // 0 = Global, 1 = PerAsset
   pricePerShare: string
-  // Aggregated totals (raw integer strings)
-  totalPendingAssets: string
-  totalClaimableAssets: string
+  // Aggregated totals — WAD denom (1e18, USD), summed across vaults
+  totalPendingDenom: string
+  totalClaimableDenom: string
   totalRedeemShares: string
   pausedVaultCount: number
   // Queue breakdown — only entries where shares > 0
@@ -112,8 +116,8 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
       vault: `0x${string}`
       asset: `0x${string}`
       redeemShares: bigint
-      claimableAssets: bigint
-      pendingAssets: bigint
+      claimableDenom: bigint
+      pendingDenom: bigint
       navAsset: bigint
       navDenomination: bigint
       isPaused: boolean
@@ -124,6 +128,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
       effNavDenomination: bigint
       globalRedeemShares: bigint
       assetTotalNavs: readonly bigint[]
+      assetEffNavDenoms: readonly bigint[]
       ppsValue: bigint
       isValidPps: boolean
     }>,
@@ -135,10 +140,17 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
     getAllWithdrawals(config),
   ])
 
+  // Resolve VaultManager via FundNavFeed.vaultManager() — same pattern as nav-reader.ts
+  const vaultManagerAddress = await publicClient.readContract({
+    address: fundNavFeedAddress,
+    abi: FUND_NAV_FEED_ABI,
+    functionName: 'vaultManager',
+  }) as `0x${string}`
+
   const assets = overviews.map((o) => o.asset)
 
   // ── Batch 2: per-asset capital breakdown + vault asset balances (all in parallel) ──
-  const [idleAmounts, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, fundNavBalances, assetMetadata] = assets.length > 0
+  const [idleAmounts, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, vaultManagerBalanceOfDenoms, fundNavBalances, assetMetadata] = assets.length > 0
     ? await Promise.all([
         Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
         Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
@@ -152,13 +164,23 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
             args: [o.vault],
           }) as Promise<bigint>
         )),
-        // balanceOf(fundVault) — assets held by the FundVault contract per asset token
+        // balanceOf(fundVault) — live ERC-20 balance the FundVault contract holds per asset (asset units)
         Promise.all(overviews.map((o) =>
           publicClient.readContract({
             address: o.asset,
             abi: ERC20_ABI,
             functionName: 'balanceOf',
             args: [fundVaultAddress],
+          }) as Promise<bigint>
+        )),
+        // VaultManager.balanceOf(asset) — WAD-denom counter (BALANCE_OF[asset]); diverges from
+        // live ERC-20 balance when an unbooked donation/withdrawal hits FundVault.
+        Promise.all(assets.map((asset) =>
+          publicClient.readContract({
+            address: vaultManagerAddress,
+            abi: VAULT_MANAGER_ABI,
+            functionName: 'balanceOf',
+            args: [asset],
           }) as Promise<bigint>
         )),
         // fundNavValue(asset) — NAV tracked in FundNavFeed per asset
@@ -173,7 +195,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
         // ERC-20 symbol + decimals for each asset
         fetchAssetMetadataForAddresses(assets),
       ])
-    : [[], [], [], [], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
+    : [[], [], [], [], [], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
 
   // ── Batch 3: per-strategy allocations (all in parallel) ──────────────────
   const allStrategies = (strategyLists as unknown as `0x${string}`[][]).flat()
@@ -195,6 +217,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
     const deployed = totalManaged > idle ? totalManaged - idle : 0n
     const vaultAssetBalance: bigint = (vaultAssetBalances as bigint[])[i] ?? 0n
     const fundVaultBalance: bigint = (fundVaultBalances as bigint[])[i] ?? 0n
+    const vaultManagerBalanceOfDenom: bigint = (vaultManagerBalanceOfDenoms as bigint[])[i] ?? 0n
     const fundNavBalance: bigint = (fundNavBalances as bigint[])[i] ?? 0n
 
     const vaultStrategyList = ((strategyLists as unknown as `0x${string}`[][])[i] ?? []) as `0x${string}`[]
@@ -209,10 +232,11 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
       symbol: meta.symbol,
       decimals: meta.decimals,
       redeemShares: o.redeemShares.toString(),
-      claimableAssets: o.claimableAssets.toString(),
-      pendingAssets: o.pendingAssets.toString(),
+      claimableDenom: o.claimableDenom.toString(),
+      pendingDenom: o.pendingDenom.toString(),
       vaultAssetBalance: vaultAssetBalance.toString(),
       fundVaultBalance: fundVaultBalance.toString(),
+      vaultManagerBalanceOfDenom: vaultManagerBalanceOfDenom.toString(),
       fundNavBalance: fundNavBalance.toString(),
       navAsset: o.navAsset.toString(),
       navDenomination: o.navDenomination.toString(),
@@ -225,11 +249,12 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
   })
 
   // ── Aggregate totals ──────────────────────────────────────────────────────
-  const totalPendingAssets = overviews
-    .reduce((sum, o) => sum + o.pendingAssets, 0n)
+  // Pending/Claimable are already WAD-denom per v0.6.0 — sum directly, no per-vault conversion.
+  const totalPendingDenom = overviews
+    .reduce((sum, o) => sum + o.pendingDenom, 0n)
     .toString()
-  const totalClaimableAssets = overviews
-    .reduce((sum, o) => sum + o.claimableAssets, 0n)
+  const totalClaimableDenom = overviews
+    .reduce((sum, o) => sum + o.claimableDenom, 0n)
     .toString()
   const totalRedeemShares = overviews
     .reduce((sum, o) => sum + o.redeemShares, 0n)
@@ -251,14 +276,16 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
       effNavDenomination: nav.effNavDenomination.toString(),
       globalRedeemShares: nav.globalRedeemShares.toString(),
       assetTotalNavs: nav.assetTotalNavs.map((n) => n.toString()),
+      assetEffNavDenoms: nav.assetEffNavDenoms.map((n) => n.toString()),
       ppsValue: nav.ppsValue.toString(),
       isValidPps: nav.isValidPps,
     },
+    vaultManagerAddress: vaultManagerAddress.toLowerCase(),
     redeemQueueLength: Number(queueLen),
     redeemMode: Number(redeemMode),
     pricePerShare: pps.toString(),
-    totalPendingAssets,
-    totalClaimableAssets,
+    totalPendingDenom,
+    totalClaimableDenom,
     totalRedeemShares,
     pausedVaultCount: vaults.filter((v) => v.isPaused).length,
     redeemActiveCount,

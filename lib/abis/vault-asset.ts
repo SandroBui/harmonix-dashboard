@@ -546,7 +546,16 @@ export const VAULT_ASSET_ABI = [
       ],
       "name":"cancelRedeem",
       "outputs":[
-         
+         {
+            "internalType":"uint256[]",
+            "name":"shares",
+            "type":"uint256[]"
+         },
+         {
+            "internalType":"uint256",
+            "name":"assetsToReturn",
+            "type":"uint256"
+         }
       ],
       "stateMutability":"nonpayable",
       "type":"function"
@@ -640,11 +649,6 @@ export const VAULT_ASSET_ABI = [
    {
       "inputs":[
          {
-            "internalType":"uint256",
-            "name":"totalAmount",
-            "type":"uint256"
-         },
-         {
             "internalType":"address[]",
             "name":"controllers",
             "type":"address[]"
@@ -652,7 +656,11 @@ export const VAULT_ASSET_ABI = [
       ],
       "name":"fulfillRedeem",
       "outputs":[
-         
+         {
+            "internalType":"uint256",
+            "name":"totalAssets",
+            "type":"uint256"
+         }
       ],
       "stateMutability":"nonpayable",
       "type":"function"

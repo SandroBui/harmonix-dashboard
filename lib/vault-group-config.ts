@@ -4,7 +4,6 @@ export type SafeAddresses = {
   /** Per-role overrides; if absent, falls back to `default` */
   operator?: `0x${string}`
   curator?: `0x${string}`
-  priceUpdater?: `0x${string}`
   admin?: `0x${string}`
   /** Timelock proposer Safe */
   timelockProposer?: `0x${string}`

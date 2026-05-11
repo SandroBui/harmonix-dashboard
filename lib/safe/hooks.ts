@@ -9,7 +9,7 @@ import { DYNAMIC_SAFE_ROLES, getDefaultSafeAddress, getResolvedSafeAddressForRol
 import type { RoleType, ResolvedRoleSafes } from './roles'
 import { initProtocolKit } from './protocol-kit'
 import { decodeTransactionData, summarizeDecodedData } from './decoder'
-import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI } from '@/lib/contracts'
+import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI, VAULT_ASSET_ABI } from '@/lib/contracts'
 import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
@@ -216,23 +216,63 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
 
       const publicClient = getPublicClient()
       let fundVaultAddress: `0x${string}` | null = null
+      // v0.6.0: fulfillRedeem(address[] controllers) — totalAmount is no longer in calldata.
+      // We simulate the call from the Safe (which holds OPERATOR_ROLE) to recover the exact
+      // totalAssets the AsyncRequestManager would pull, then compare against FundVault's live
+      // ERC-20 balance for the underfunded warning.
       const fulfillInfo = new Map<string, { totalAmount: bigint; assetAddress: `0x${string}` }>()
       const neededAssets = new Set<`0x${string}`>()
 
+      const fulfillCandidates: Array<{
+        safeTxHash: string
+        vaultAddress: `0x${string}`
+        controllers: `0x${string}`[]
+        assetAddress: `0x${string}`
+      }> = []
       for (const { tx, dataDecoded } of decodedResults) {
         if (dataDecoded?.method !== 'fulfillRedeem') continue
-        const totalAmountParam = dataDecoded.parameters.find((p) => p.name === 'totalAmount')
+        const controllersParam = dataDecoded.parameters.find((p) => p.name === 'controllers')
         const tokenAddr = vaultAssetMap?.[tx.to.toLowerCase()]
-        if (!totalAmountParam || !tokenAddr) continue
+        if (!controllersParam || !tokenAddr) continue
         try {
-          const totalAmount = BigInt(totalAmountParam.value)
+          const controllers = (JSON.parse(controllersParam.value) as string[])
+            .map((c) => getAddress(c) as `0x${string}`)
+          if (controllers.length === 0) continue
           const normalizedAsset = getAddress(tokenAddr) as `0x${string}`
-          fulfillInfo.set(tx.safeTxHash, { totalAmount, assetAddress: normalizedAsset })
+          fulfillCandidates.push({
+            safeTxHash: tx.safeTxHash,
+            vaultAddress: getAddress(tx.to) as `0x${string}`,
+            controllers,
+            assetAddress: normalizedAsset,
+          })
           neededAssets.add(normalizedAsset)
         } catch {
           // ignore malformed fulfill params and continue rendering transactions
         }
       }
+
+      // Simulate fulfillRedeem from the Safe to get the exact totalAssets pull amount.
+      // Fail-soft: if the simulation reverts (e.g., requests already fulfilled / cancelled,
+      // or Safe lacks OPERATOR_ROLE), we just skip the precheck for that tx.
+      await Promise.all(
+        fulfillCandidates.map(async (cand) => {
+          try {
+            const { result } = await publicClient.simulateContract({
+              address: cand.vaultAddress,
+              abi: VAULT_ASSET_ABI,
+              functionName: 'fulfillRedeem',
+              args: [cand.controllers],
+              account: addr,
+            })
+            fulfillInfo.set(cand.safeTxHash, {
+              totalAmount: result as bigint,
+              assetAddress: cand.assetAddress,
+            })
+          } catch {
+            // simulation failed — leave precheck unset so the UI just shows generic info
+          }
+        }),
+      )
 
       const fundVaultBalances = new Map<string, bigint>()
       if (neededAssets.size > 0) {

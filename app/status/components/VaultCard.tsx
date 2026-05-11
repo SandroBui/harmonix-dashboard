@@ -1,5 +1,5 @@
 import type { VaultOverviewData } from '@/lib/status-reader'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatDenomination, formatTokenAmount, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import CapitalDonut from './CapitalDonut'
 
@@ -8,12 +8,14 @@ type Props = { vault: VaultOverviewData }
 export default function VaultCard({ vault }: Props) {
   const d = vault.decimals
   const idle = BigInt(vault.idleAssets)
-  const pending = BigInt(vault.pendingAssets)
-  const claimable = BigInt(vault.claimableAssets)
+  // Per v0.6.0: pendingDenom/claimableDenom are WAD-denom (USD). They cannot share a donut
+  // with idle/fundNav (asset units), so the donut renders only the asset-unit segments.
+  const pendingDenom = BigInt(vault.pendingDenom)
+  const claimableDenom = BigInt(vault.claimableDenom)
   const fundNav = BigInt(vault.fundNavBalance)
   const redeemShares = BigInt(vault.redeemShares)
 
-  const hasRedemptions = pending > 0n || claimable > 0n || redeemShares > 0n
+  const hasRedemptions = pendingDenom > 0n || claimableDenom > 0n || redeemShares > 0n
 
   return (
     <div
@@ -79,8 +81,8 @@ export default function VaultCard({ vault }: Props) {
         <div className="flex items-center gap-8">
           <CapitalDonut
             idle={idle}
-            claimable={claimable}
-            pending={pending}
+            claimable={0n}
+            pending={0n}
             fundNav={fundNav}
             size={180}
             strokeWidth={26}
@@ -90,8 +92,6 @@ export default function VaultCard({ vault }: Props) {
           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
             {[
               { label: 'Idle', value: idle, dot: 'bg-emerald-500' },
-              { label: 'Claimable', value: claimable, dot: 'bg-blue-500' },
-              { label: 'Pending', value: pending, dot: 'bg-yellow-400' },
               { label: 'Fund NAV', value: fundNav, dot: 'bg-violet-500' },
             ].map((row) => {
               const isZero = row.value === 0n
@@ -152,15 +152,13 @@ export default function VaultCard({ vault }: Props) {
             <div>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">Pending</p>
               <p className="mt-0.5 font-semibold tabular-nums text-yellow-600 dark:text-yellow-400">
-                {formatTokenAmount(vault.pendingAssets, d, 4)}
-                <span className="ml-1 text-xs font-normal opacity-70">{vault.symbol}</span>
+                {formatDenomination(vault.pendingDenom, 2)}
               </p>
             </div>
             <div>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">Claimable</p>
               <p className="mt-0.5 font-semibold tabular-nums text-blue-600 dark:text-blue-400">
-                {formatTokenAmount(vault.claimableAssets, d, 4)}
-                <span className="ml-1 text-xs font-normal opacity-70">{vault.symbol}</span>
+                {formatDenomination(vault.claimableDenom, 2)}
               </p>
             </div>
             <div>

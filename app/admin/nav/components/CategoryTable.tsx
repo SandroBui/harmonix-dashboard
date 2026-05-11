@@ -70,7 +70,7 @@ function CategoryRowActions({
   const assetAddress = getAddress(asset) as `0x${string}`
   const isWrongChain = roles.isConnected && chainId !== 999
 
-  const canProposePriceUpdater =
+  const canProposeOperator =
     roles.isConnected && !isWrongChain && roles.isSafeOwner && roles.safeHasOperator
   const canProposeAdmin =
     roles.isConnected && !isWrongChain && roles.isSafeOwner && roles.safeHasAdmin
@@ -109,7 +109,7 @@ function CategoryRowActions({
       <ActionTooltip text="Push a new NAV value for this category via Safe proposal">
         <button
           onClick={onSyncClick}
-          disabled={!canProposePriceUpdater}
+          disabled={!canProposeOperator}
           className={`${btnBase} bg-blue-600 text-white hover:bg-blue-500 focus-visible:ring-blue-500`}
         >
           Sync
@@ -199,7 +199,7 @@ function CategoryRowActions({
 export default function CategoryTable({ asset, symbol, decimals, categories, roles }: Props) {
   const [activeAction, setActiveAction] = useState<ActionState>(null)
 
-  const canProposePriceUpdater =
+  const canProposeOperator =
     roles.isConnected && roles.isSafeOwner && roles.safeHasOperator
   const canProposeAdmin =
     roles.isConnected && roles.isSafeOwner && roles.safeHasAdmin
@@ -285,7 +285,7 @@ export default function CategoryTable({ asset, symbol, decimals, categories, rol
                             decimals={decimals}
                             symbol={symbol}
                             category={cat}
-                            canPropose={canProposePriceUpdater}
+                            canPropose={canProposeOperator}
                             isConnected={roles.isConnected}
                             onClose={() => setActiveAction(null)}
                           />

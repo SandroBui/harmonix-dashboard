@@ -1,34 +1,14 @@
-import type { NavSnapshotData, VaultOverviewData } from '@/lib/status-reader'
+import type { NavSnapshotData } from '@/lib/status-reader'
 import { formatDenomination, formatTokenAmount } from '@/lib/format'
 
 type Props = {
   navSnapshot: NavSnapshotData
   pricePerShare: string
-  vaults: VaultOverviewData[]
+  totalPendingDenom: string
+  totalClaimableDenom: string
 }
 
-/**
- * Convert a per-vault asset amount to denomination (USD, 1e18) using the
- * vault's stored NAV ratio: denomination = amount * navDenomination / navAsset
- */
-function assetsToDenomination(assets: string, navAsset: string, navDenomination: string): bigint {
-  const a = BigInt(assets)
-  const navA = BigInt(navAsset)
-  const navD = BigInt(navDenomination)
-  if (a === 0n || navA === 0n) return 0n
-  return (a * navD) / navA
-}
-
-export default function FundSummaryCards({ navSnapshot, pricePerShare, vaults }: Props) {
-  // Sum pending and claimable across all vaults, converted to denomination (USD)
-  const totalPendingDenom = vaults.reduce(
-    (sum, v) => sum + assetsToDenomination(v.pendingAssets, v.navAsset, v.navDenomination),
-    0n,
-  )
-  const totalClaimableDenom = vaults.reduce(
-    (sum, v) => sum + assetsToDenomination(v.claimableAssets, v.navAsset, v.navDenomination),
-    0n,
-  )
+export default function FundSummaryCards({ navSnapshot, pricePerShare, totalPendingDenom, totalClaimableDenom }: Props) {
 
   const cards: { label: string; value: React.ReactNode; sub: React.ReactNode | null; warn: boolean }[] = [
     {
@@ -81,12 +61,12 @@ export default function FundSummaryCards({ navSnapshot, pricePerShare, vaults }:
       value: (
         <div className="flex items-baseline gap-4">
           <div>
-            {formatDenomination(totalPendingDenom.toString())}
+            {formatDenomination(totalPendingDenom)}
             <div className="text-xs font-normal text-neutral-400">Pending</div>
           </div>
           <div className="text-neutral-300 dark:text-neutral-600">·</div>
           <div className="text-neutral-700 dark:text-neutral-200">
-            {formatDenomination(totalClaimableDenom.toString())}
+            {formatDenomination(totalClaimableDenom)}
             <div className="text-xs font-normal text-neutral-400">Claimable</div>
           </div>
         </div>

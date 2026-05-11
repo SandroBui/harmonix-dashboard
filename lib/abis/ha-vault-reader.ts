@@ -385,12 +385,12 @@ export const HA_VAULT_READER_ABI =
           },
           {
             "internalType": "uint256",
-            "name": "claimableAssets",
+            "name": "claimableDenom",
             "type": "uint256"
           },
           {
             "internalType": "uint256",
-            "name": "pendingAssets",
+            "name": "pendingDenom",
             "type": "uint256"
           },
           {
@@ -740,6 +740,11 @@ export const HA_VAULT_READER_ABI =
           {
             "internalType": "uint256[]",
             "name": "assetTotalNavs",
+            "type": "uint256[]"
+          },
+          {
+            "internalType": "uint256[]",
+            "name": "assetEffNavDenoms",
             "type": "uint256[]"
           },
           {
@@ -1349,12 +1354,12 @@ export const HA_VAULT_READER_ABI =
       },
       {
         "internalType": "uint256",
-        "name": "claimableAssets",
+        "name": "claimableDenom",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
-        "name": "pendingAssets",
+        "name": "pendingDenom",
         "type": "uint256"
       },
       {
