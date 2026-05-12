@@ -16,7 +16,7 @@ type Tab = 'durations' | 'submit' | 'revoke'
 const TAB_LABELS: Record<Tab, string> = {
   durations: 'Durations',
   submit: 'Submit Operation',
-  revoke: 'Revoke Operation',
+  revoke: 'Pending Operations',
 }
 
 export default function TimelockClient() {
@@ -137,7 +137,7 @@ export default function TimelockClient() {
           ))}
         </div>
 
-        {activeTab === 'durations' && <DurationsTab timelocks={data.timelocks} />}
+        {activeTab === 'durations' && <DurationsTab data={data} />}
         {activeTab === 'submit' && <SubmitTab data={data} />}
         {activeTab === 'revoke' && <RevokeTab data={data} />}
       </div>

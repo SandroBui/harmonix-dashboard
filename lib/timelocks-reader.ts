@@ -1,11 +1,16 @@
-import { toFunctionSelector } from 'viem'
+import { decodeFunctionData, toFunctionSelector } from 'viem'
 import {
   HA_VAULT_READER_ABI,
   FUND_NAV_FEED_ABI,
   VAULT_MANAGER_ABI,
   FUND_VAULT_ABI,
   VAULT_MANAGER_ADMIN_ABI,
+  HA_BASE_ABI,
 } from './contracts'
+
+// On-chain floor enforced by HaBaseUpgradeable.setTimelockDuration (1 hour).
+// Mirror locally to fail fast in the UI; the contract is the source of truth.
+export const MIN_TIMELOCK_DURATION_SECONDS = 3600n
 import { getPublicClient } from './client'
 import type { VaultGroupConfig } from './vault-group-config'
 
@@ -19,7 +24,7 @@ export type TimelockFunctionDef = {
   selector: `0x${string}`
   contract: ContractTarget
   abi: readonly object[]
-  args: 'address' | 'address_uint256' | 'uint256' | 'address_bytes4' | 'address_uint128_uint128'
+  args: 'address' | 'address_uint256' | 'uint256' | 'address_bytes4' | 'address_uint128_uint128' | 'bytes4_uint256'
 }
 
 export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
@@ -183,7 +188,80 @@ export const TIMELOCKED_FUNCTIONS: TimelockFunctionDef[] = [
     abi: VAULT_MANAGER_ADMIN_ABI,
     args: 'address_bytes4',
   },
+  // setTimelockDuration is itself timelocked (v0.6.4). Both FundVault and
+  // VaultManagerAdmin inherit it from HaBaseUpgradeable, so register both —
+  // each contract has its own setter delay configured independently.
+  {
+    name: 'setTimelockDuration',
+    signature: 'setTimelockDuration(bytes4,uint256)',
+    selector: toFunctionSelector('setTimelockDuration(bytes4,uint256)'),
+    contract: 'fundVault',
+    abi: HA_BASE_ABI,
+    args: 'bytes4_uint256',
+  },
+  {
+    name: 'setTimelockDuration',
+    signature: 'setTimelockDuration(bytes4,uint256)',
+    selector: toFunctionSelector('setTimelockDuration(bytes4,uint256)'),
+    contract: 'vaultManagerAdmin',
+    abi: HA_BASE_ABI,
+    args: 'bytes4_uint256',
+  },
 ]
+
+export type PendingDurationChange = {
+  opId: string
+  innerSelector: `0x${string}`
+  newDuration: string
+  executableAt: string
+  isReady: boolean
+}
+
+// Decodes pending `setTimelockDuration` ops to find which (contract, selector)
+// pairs are about to change. Returns matches for one row; an array because the
+// contract keys queued ops by keccak(data), so two distinct (selector,duration)
+// queues can coexist.
+export function getPendingDurationChanges(
+  pendingOps: PendingOperation[],
+  contractAddress: string,
+  innerSelector: string,
+): PendingDurationChange[] {
+  const contract = contractAddress.toLowerCase()
+  const selector = innerSelector.toLowerCase()
+  const out: PendingDurationChange[] = []
+  for (const op of pendingOps) {
+    if (op.fnName !== 'setTimelockDuration') continue
+    if (op.contractAddress.toLowerCase() !== contract) continue
+    let decoded: { functionName: string; args: readonly unknown[] }
+    try {
+      decoded = decodeFunctionData({ abi: HA_BASE_ABI, data: op.data as `0x${string}` })
+    } catch {
+      continue
+    }
+    if (decoded.functionName !== 'setTimelockDuration') continue
+    const args = decoded.args as readonly [`0x${string}`, bigint]
+    if (args[0].toLowerCase() !== selector) continue
+    out.push({
+      opId: op.id,
+      innerSelector: args[0],
+      newDuration: args[1].toString(),
+      executableAt: op.executableAt,
+      isReady: op.isReady,
+    })
+  }
+  return out
+}
+
+export function getSetterDuration(
+  timelocks: TimelockEntry[],
+  contractAddress: string,
+): bigint {
+  const target = contractAddress.toLowerCase()
+  const entry = timelocks.find(
+    (t) => t.fnName === 'setTimelockDuration' && t.contractAddress.toLowerCase() === target,
+  )
+  return entry ? BigInt(entry.duration) : 0n
+}
 
 // ─── Output types (no bigints) ────────────────────────────────────────────────
 

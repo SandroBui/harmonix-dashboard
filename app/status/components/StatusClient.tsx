@@ -89,6 +89,7 @@ export default function StatusClient({ data }: { data: FundStatusData }) {
         vaults={data.vaults}
         redeemActiveCount={data.redeemActiveCount}
         redeemFulfilledCount={data.redeemFulfilledCount}
+        totalShares={data.navSnapshot.totalSupply}
       />
 
       <div>

@@ -148,11 +148,13 @@ export default function SubmitTab({ data }: Props) {
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
           >
             <option value="">Select a function...</option>
-            {TIMELOCKED_FUNCTIONS.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.signature} ({f.contract === 'fundVault' ? 'FundVault' : 'VaultManagerAdmin'})
-              </option>
-            ))}
+            {TIMELOCKED_FUNCTIONS
+              .filter((f) => f.name !== 'setTimelockDuration')
+              .map((f) => (
+                <option key={`${f.contract}-${f.name}`} value={f.name}>
+                  {f.signature} ({f.contract === 'fundVault' ? 'FundVault' : 'VaultManagerAdmin'})
+                </option>
+              ))}
           </select>
         </div>
 

@@ -8,12 +8,14 @@ type Props = { vault: VaultOverviewData }
 export default function VaultCard({ vault }: Props) {
   const d = vault.decimals
   const idle = BigInt(vault.idleAssets)
-  // Idle is in asset units; fundNav is WAD-denom (USD) per FundNavFeed. Donut mixes them
-  // for proportions — works for 1:1-pegged 18-decimal assets, will skew otherwise.
+  // All donut wedges use WAD-denom (USD) so proportions and the centre total are
+  // valid regardless of the underlying asset's decimals or peg.
+  const idleDenom = BigInt(vault.idleDenom)
   const pendingDenom = BigInt(vault.pendingDenom)
   const claimableDenom = BigInt(vault.claimableDenom)
   const fundNav = BigInt(vault.fundNavBalance)
   const redeemShares = BigInt(vault.redeemShares)
+  const donutTotalDenom = idleDenom + fundNav + claimableDenom
 
   const hasRedemptions = pendingDenom > 0n || claimableDenom > 0n || redeemShares > 0n
 
@@ -80,14 +82,13 @@ export default function VaultCard({ vault }: Props) {
         </p>
         <div className="flex items-center gap-8">
           <CapitalDonut
-            idle={idle}
-            claimable={0n}
+            idle={idleDenom}
+            claimable={claimableDenom}
             pending={0n}
             fundNav={fundNav}
             size={180}
             strokeWidth={26}
-            centerPrimary={`${formatTokenAmount(vault.navAsset, d, 2)} ${vault.symbol}`}
-            centerSecondary={`≈ $${formatTokenAmount(vault.navDenomination, 18, 2)}`}
+            centerPrimary={formatDenomination(donutTotalDenom.toString(), 2)}
           />
           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
             {[
@@ -106,6 +107,14 @@ export default function VaultCard({ vault }: Props) {
                 dot: 'bg-violet-500',
                 // FundNavFeed.fundNavValue(asset) is WAD-denom (USD), not asset units.
                 primary: formatDenomination(vault.fundNavBalance, 2),
+                secondary: null,
+              },
+              {
+                // Reserved in the AssetVault for users to claim — not part of Idle or Fund NAV.
+                label: 'Claimable',
+                value: claimableDenom,
+                dot: 'bg-blue-500',
+                primary: formatDenomination(vault.claimableDenom, 2),
                 secondary: null,
               },
             ].map((row) => {

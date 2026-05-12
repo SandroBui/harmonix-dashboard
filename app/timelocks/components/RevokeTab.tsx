@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { getAddress } from 'viem'
 import { HA_BASE_ABI } from '@/lib/abis'
-import { useRoleCheck } from '@/lib/safe/hooks'
+import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import type { PendingOperation, TimelockPageData } from '@/lib/timelocks-reader'
 
 type Props = {
@@ -67,12 +67,15 @@ export default function RevokeTab({ data }: Props) {
 function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
   const { isConnected, chainId } = useAccount()
   const { hasRole: sentinelHasRole } = useRoleCheck('sentinel')
+  const { safeAddress, isSafeOwner, hasRole: adminHasRole } = useRoleCheck('admin')
 
   const { writeContract, data: txHash, isPending, isSuccess, isError, error, reset } = useWriteContract()
   const { isLoading: isConfirming } = useWaitForTransactionReceipt({
     hash: txHash,
     query: { enabled: Boolean(txHash) },
   })
+
+  const executeTx = useProposeSafeTransaction(safeAddress)
 
   const isWrongChain = isConnected && chainId !== 999
   const contractAddress = getAddress(op.contractAddress)
@@ -84,6 +87,16 @@ function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
       abi: HA_BASE_ABI,
       functionName: 'revoke',
       args: [op.data as `0x${string}`],
+    })
+  }
+
+  // Execute proposes the original inner calldata directly. `_timelocked()`
+  // validates that this hash was previously submitted and the delay elapsed.
+  function handleExecute() {
+    executeTx.reset()
+    executeTx.mutate({
+      to: contractAddress as `0x${string}`,
+      data: op.data as `0x${string}`,
     })
   }
 
@@ -110,6 +123,35 @@ function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
     btnClass = 'bg-red-600 text-white hover:bg-red-700'
   } else {
     btnLabel = 'Revoke'
+  }
+
+  // Execute button state — separate from Revoke. Only rendered when op.isReady.
+  let execLabel: string
+  let execDisabled = false
+  let execClass = 'bg-green-600 text-white hover:bg-green-700'
+
+  if (!isConnected) {
+    execLabel = 'Connect wallet'; execDisabled = true
+    execClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (isWrongChain) {
+    execLabel = 'Wrong network'; execDisabled = true
+    execClass = 'bg-amber-100 text-amber-600 cursor-not-allowed'
+  } else if (!isSafeOwner) {
+    execLabel = 'Not a Safe owner'; execDisabled = true
+    execClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!adminHasRole) {
+    execLabel = 'Safe lacks DEFAULT_ADMIN_ROLE'; execDisabled = true
+    execClass = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (executeTx.isPending) {
+    execLabel = 'Confirm in wallet...'; execDisabled = true
+  } else if (executeTx.isSuccess) {
+    execLabel = 'Proposed'; execDisabled = true
+    execClass = 'bg-green-600 text-white cursor-not-allowed'
+  } else if (executeTx.isError) {
+    execLabel = 'Failed — Retry'
+    execClass = 'bg-red-600 text-white hover:bg-red-700'
+  } else {
+    execLabel = 'Execute via Safe'
   }
 
   const etaLabel = op.isReady ? 'Ready' : formatCountdown(op.executableAt, nowMs)
@@ -147,6 +189,25 @@ function PendingOpRow({ op, nowMs }: { op: PendingOperation; nowMs: number }) {
             <span className="max-w-[200px] truncate text-xs text-red-600 cursor-help" title={error?.message}>
               {error?.message}
             </span>
+          )}
+          {executeTx.isSuccess && (
+            <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
+              View
+            </Link>
+          )}
+          {executeTx.error && (
+            <span className="max-w-[200px] truncate text-xs text-red-600 cursor-help" title={executeTx.error.message}>
+              {executeTx.error.message}
+            </span>
+          )}
+          {op.isReady && (
+            <button
+              onClick={handleExecute}
+              disabled={execDisabled}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${execClass}`}
+            >
+              {execLabel}
+            </button>
           )}
           <button
             onClick={handleRevoke}

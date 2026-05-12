@@ -26,6 +26,7 @@ type Props = {
   vaults: VaultOverviewData[]
   redeemActiveCount: number
   redeemFulfilledCount: number
+  totalShares: string
 }
 
 export default function WithdrawalQueueSummary({
@@ -34,6 +35,7 @@ export default function WithdrawalQueueSummary({
   vaults,
   redeemActiveCount,
   redeemFulfilledCount,
+  totalShares,
 }: Props) {
   // Sum redeemShares from each vault — these are the *currently pending* locked shares.
   // (getNavSnapshot().globalRedeemShares is a cumulative NAV accounting figure and
@@ -69,8 +71,24 @@ export default function WithdrawalQueueSummary({
     },
     {
       label: 'Locked Redeem Shares',
-      value: formatTokenAmount(lockedRedeemShares, 18, 2),
-      sub: 'Shares currently held pending fulfillment',
+      custom: (
+        <div className="mt-1 flex items-end gap-3">
+          <div>
+            <p className="text-xl font-semibold tabular-nums text-neutral-900 dark:text-white">
+              {formatTokenAmount(totalShares, 18, 2)}
+            </p>
+            <p className="mt-0.5 text-xs text-neutral-400 dark:text-neutral-500">total</p>
+          </div>
+          <span className="mb-5 text-neutral-300 dark:text-neutral-600">/</span>
+          <div>
+            <p className="text-xl font-semibold tabular-nums text-neutral-500 dark:text-neutral-400">
+              {formatTokenAmount(lockedRedeemShares, 18, 2)}
+            </p>
+            <p className="mt-0.5 text-xs text-neutral-400 dark:text-neutral-500">locked</p>
+          </div>
+        </div>
+      ),
+      sub: 'Total share supply / shares pending fulfillment',
     },
     {
       label: 'Redeem Mode',
