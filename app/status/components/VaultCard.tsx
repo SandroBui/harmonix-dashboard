@@ -8,8 +8,8 @@ type Props = { vault: VaultOverviewData }
 export default function VaultCard({ vault }: Props) {
   const d = vault.decimals
   const idle = BigInt(vault.idleAssets)
-  // Per v0.6.0: pendingDenom/claimableDenom are WAD-denom (USD). They cannot share a donut
-  // with idle/fundNav (asset units), so the donut renders only the asset-unit segments.
+  // Idle is in asset units; fundNav is WAD-denom (USD) per FundNavFeed. Donut mixes them
+  // for proportions — works for 1:1-pegged 18-decimal assets, will skew otherwise.
   const pendingDenom = BigInt(vault.pendingDenom)
   const claimableDenom = BigInt(vault.claimableDenom)
   const fundNav = BigInt(vault.fundNavBalance)
@@ -91,8 +91,23 @@ export default function VaultCard({ vault }: Props) {
           />
           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
             {[
-              { label: 'Idle', value: idle, dot: 'bg-emerald-500' },
-              { label: 'Fund NAV', value: fundNav, dot: 'bg-violet-500' },
+              {
+                label: 'Idle',
+                value: idle,
+                dot: 'bg-emerald-500',
+                // Idle has two onchain trackers — denom (USD) + asset units. For pegged assets like
+                // USDe these can drift, so show both.
+                primary: formatDenomination(vault.idleDenom, 2),
+                secondary: `${formatTokenAmount(idle.toString(), d, 4)} ${vault.symbol}`,
+              },
+              {
+                label: 'Fund NAV',
+                value: fundNav,
+                dot: 'bg-violet-500',
+                // FundNavFeed.fundNavValue(asset) is WAD-denom (USD), not asset units.
+                primary: formatDenomination(vault.fundNavBalance, 2),
+                secondary: null,
+              },
             ].map((row) => {
               const isZero = row.value === 0n
               return (
@@ -107,10 +122,12 @@ export default function VaultCard({ vault }: Props) {
                     {row.label}
                   </span>
                   <span className="ml-auto truncate text-xs font-semibold tabular-nums text-neutral-900 dark:text-white">
-                    {formatTokenAmount(row.value.toString(), d, 4)}
-                    <span className="ml-1 text-[11px] font-normal text-neutral-400">
-                      {vault.symbol}
-                    </span>
+                    {row.primary}
+                    {row.secondary && (
+                      <span className="ml-1 text-[11px] font-normal text-neutral-400">
+                        ({row.secondary})
+                      </span>
+                    )}
                   </span>
                 </div>
               )

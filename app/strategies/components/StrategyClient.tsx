@@ -7,7 +7,7 @@ import { encodeFunctionData, getAddress, parseUnits, decodeFunctionData } from '
 import { FUND_VAULT_ABI, HA_BASE_ABI } from '@/lib/abis'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatDenomination, formatTokenAmount, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import Tooltip from '@/app/components/Tooltip'
 import { useTimelockStatus, useFundVaultPending } from '@/lib/hooks/use-timelock-status'
@@ -627,7 +627,11 @@ function AssetCard({ asset }: { asset: AssetStrategySummary }) {
         <CopyButton value={asset.asset} />
       </div>
       <div className="space-y-2 text-sm">
-        <Row label="Idle (FundVault)" value={formatTokenAmount(asset.idleAssets, asset.decimals)} symbol={asset.symbol} />
+        <Row
+          label="Idle (FundVault)"
+          value={formatDenomination(asset.idleDenom, 2)}
+          symbol={`(${formatTokenAmount(asset.idleAssets, asset.decimals)} ${asset.symbol})`}
+        />
         <Row label="Deployed" value={formatTokenAmount(asset.deployedAssets, asset.decimals)} symbol={asset.symbol} />
         <Row label="Total Managed" value={formatTokenAmount(asset.totalManagedAssets, asset.decimals)} symbol={asset.symbol} highlight />
         <div className="pt-1 text-xs text-neutral-400">

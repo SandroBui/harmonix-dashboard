@@ -42,13 +42,8 @@ export default function WithdrawalQueueSummary({
     .reduce((sum, v) => sum + BigInt(v.redeemShares), 0n)
     .toString()
 
-  // Show a row for every vault that has any redemption activity or a non-zero balance
-  const vaultRows = vaults.filter(
-    (v) =>
-      BigInt(v.pendingDenom) > 0n ||
-      BigInt(v.claimableDenom) > 0n ||
-      BigInt(v.vaultAssetBalance) > 0n,
-  )
+  // Show every registered vault, even with zero activity — operators want a complete inventory.
+  const vaultRows = vaults
 
   const cards = [
     {

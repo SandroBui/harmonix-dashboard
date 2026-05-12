@@ -34,6 +34,9 @@ export type AssetStrategySummary = {
   symbol: string
   decimals: number
   idleAssets: string
+  // Idle balance in WAD-denom (1e18, USD) — getAssetDenomBalance(asset). Separately stored
+  // counter; can drift from idleAssets × price for pegged assets.
+  idleDenom: string
   totalManagedAssets: string
   deployedAssets: string
   strategies: StrategyData[]
@@ -71,9 +74,10 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
   }
 
   // ── Batch 2: per-asset data ──────────────────────────────────────────────
-  const [strategyLists, idleAmounts, totalManagedAmounts, assetMetadata] = await Promise.all([
+  const [strategyLists, idleAmounts, idleDenoms, totalManagedAmounts, assetMetadata] = await Promise.all([
     Promise.all(assets.map((asset) => read('getStrategies', [asset]) as Promise<readonly `0x${string}`[]>)),
     Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
+    Promise.all(assets.map((asset) => read('getAssetDenomBalance', [asset]) as Promise<bigint>)),
     Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
     fetchAssetMetadataForAddresses(assets),
   ])
@@ -149,6 +153,7 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
     const assetAddr = asset.toLowerCase()
     const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
     const idle = idleAmounts[i] ?? 0n
+    const idleDenom = idleDenoms[i] ?? 0n
     const totalManaged = totalManagedAmounts[i] ?? 0n
     const deployed = totalManaged > idle ? totalManaged - idle : 0n
 
@@ -176,6 +181,7 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
       symbol: meta.symbol,
       decimals: meta.decimals,
       idleAssets: idle.toString(),
+      idleDenom: idleDenom.toString(),
       totalManagedAssets: totalManaged.toString(),
       deployedAssets: deployed.toString(),
       strategies,

@@ -46,6 +46,9 @@ export type VaultOverviewData = {
   isPaused: boolean
   // Capital breakdown (from FundVault)
   idleAssets: string
+  // Idle balance in WAD-denom (1e18, USD) — getAssetDenomBalance(asset). For pegged assets like
+  // USDe this can diverge from idleAssets × price, since it's a separately stored counter.
+  idleDenom: string
   totalManagedAssets: string
   deployedAssets: string // totalManaged - idle (may be negative if rounding, clamp to 0)
   strategies: StrategyAllocation[]
@@ -97,7 +100,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
   function read<F extends 'getAllVaultOverviews' | 'getNavSnapshot' | 'getRedeemQueueLength' | 'getRedeemMode' | 'getPricePerShare' | 'getFundVault' | 'getFundNav'>(
     functionName: F,
   ): ReturnType<typeof publicClient.readContract>
-  function read<F extends 'getIdleAssets' | 'getTotalManagedAssets' | 'getStrategies' | 'getAllocated'>(
+  function read<F extends 'getIdleAssets' | 'getAssetDenomBalance' | 'getTotalManagedAssets' | 'getStrategies' | 'getAllocated'>(
     functionName: F,
     args: [`0x${string}`],
   ): ReturnType<typeof publicClient.readContract>
@@ -150,9 +153,12 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
   const assets = overviews.map((o) => o.asset)
 
   // ── Batch 2: per-asset capital breakdown + vault asset balances (all in parallel) ──
-  const [idleAmounts, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, vaultManagerBalanceOfDenoms, fundNavBalances, assetMetadata] = assets.length > 0
+  const [idleAmounts, idleDenoms, totalManagedAmounts, strategyLists, vaultAssetBalances, fundVaultBalances, vaultManagerBalanceOfDenoms, fundNavBalances, assetMetadata] = assets.length > 0
     ? await Promise.all([
         Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
+        // getAssetDenomBalance(asset) — idle balance in WAD-denom (USD); separately stored counter,
+        // not derived from idleAssets × price, so it can drift for pegged assets.
+        Promise.all(assets.map((asset) => read('getAssetDenomBalance', [asset]) as Promise<bigint>)),
         Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
         Promise.all(assets.map((asset) => read('getStrategies', [asset]) as Promise<readonly `0x${string}`[]>)),
         // balanceOf(vault) — liquid assets the VaultAsset contract holds
@@ -195,7 +201,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
         // ERC-20 symbol + decimals for each asset
         fetchAssetMetadataForAddresses(assets),
       ])
-    : [[], [], [], [], [], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
+    : [[], [], [], [], [], [], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>]
 
   // ── Batch 3: per-strategy allocations (all in parallel) ──────────────────
   const allStrategies = (strategyLists as unknown as `0x${string}`[][]).flat()
@@ -213,6 +219,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
     const meta = assetMetadata[assetAddr] ?? { symbol: assetAddr.slice(0, 10), decimals: 18 }
 
     const idle: bigint = (idleAmounts as bigint[])[i] ?? 0n
+    const idleDenom: bigint = (idleDenoms as bigint[])[i] ?? 0n
     const totalManaged: bigint = (totalManagedAmounts as bigint[])[i] ?? 0n
     const deployed = totalManaged > idle ? totalManaged - idle : 0n
     const vaultAssetBalance: bigint = (vaultAssetBalances as bigint[])[i] ?? 0n
@@ -242,6 +249,7 @@ export async function getFundStatus(config: VaultGroupConfig): Promise<FundStatu
       navDenomination: o.navDenomination.toString(),
       isPaused: o.isPaused,
       idleAssets: idle.toString(),
+      idleDenom: idleDenom.toString(),
       totalManagedAssets: totalManaged.toString(),
       deployedAssets: deployed.toString(),
       strategies,
