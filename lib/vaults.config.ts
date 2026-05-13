@@ -4,7 +4,7 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
   {
     slug: 'main',
     name: 'Main Vault',
-    description: 'Primary Harmonix vault on HyperEVM',
+    description: 'Primary Harmonix on HyperEVM',
     chainId: 999,
     haVaultReaderAddress: '0x93703f65b7B19548eaE3A3d2fD16a083AeC864d2',
     safe: {
