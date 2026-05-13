@@ -6,9 +6,9 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     name: 'Main Vault',
     description: 'Primary Harmonix vault on HyperEVM',
     chainId: 999,
-    haVaultReaderAddress: '0x6402EB27609eef6FE243fAB5909518C55cb8B644',
+    haVaultReaderAddress: '0x93703f65b7B19548eaE3A3d2fD16a083AeC864d2',
     safe: {
-      default: '0xF0dAE819dB18b4F847306dD2649B39Da819d3DdF',
+      default: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
     },
   },
 ]
