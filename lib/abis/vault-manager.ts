@@ -22,6 +22,19 @@ export const VAULT_MANAGER_ABI = [
     stateMutability: 'nonpayable',
     type: 'function',
   },
+  // Converts a raw asset amount (in asset units) into the WAD-denom space
+  // used by the on-chain NAV math. Required for derived NAV deltas that mirror
+  // the contract's internal ratio without re-implementing it client-side.
+  {
+    inputs: [
+      { internalType: 'address', name: 'asset', type: 'address' },
+      { internalType: 'uint256', name: 'amount', type: 'uint256' },
+    ],
+    name: 'convertAssetToDenomByRatio',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
   {
     inputs: [],
     name: 'computeNav',

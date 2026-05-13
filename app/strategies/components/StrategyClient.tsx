@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
-import { useAccount } from 'wagmi'
-import { encodeFunctionData, getAddress, parseUnits, decodeFunctionData } from 'viem'
-import { FUND_VAULT_ABI, HA_BASE_ABI } from '@/lib/abis'
+import { useAccount, useReadContract } from 'wagmi'
+import { encodeFunctionData, getAddress, parseUnits, formatUnits, decodeFunctionData } from 'viem'
+import { FUND_VAULT_ABI, FUND_NAV_FEED_ABI, HA_BASE_ABI, VAULT_MANAGER_ABI } from '@/lib/abis'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
+import { useProposeSafeTransaction, useProposeSafeMultiSendTransaction, useRoleCheck } from '@/lib/safe/hooks'
 import { formatDenomination, formatTokenAmount, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import Tooltip from '@/app/components/Tooltip'
@@ -21,13 +21,14 @@ type Props = { data: StrategyPageData }
 
 // ─── Action types ────────────────────────────────────────────────────────────
 
-type ActionType = 'addStrategy' | 'removeStrategy' | 'setStrategyCap' | 'allocate' | 'deallocate'
+type ActionType = 'addStrategy' | 'removeStrategy' | 'setStrategyCap' | 'allocate' | 'allocateAndSync' | 'deallocate'
 
 const ACTION_LABELS: Record<ActionType, string> = {
   addStrategy: 'Add Strategy',
   removeStrategy: 'Remove Strategy',
   setStrategyCap: 'Set Cap',
   allocate: 'Allocate',
+  allocateAndSync: 'Allocate & Sync',
   deallocate: 'Deallocate',
 }
 
@@ -60,6 +61,9 @@ export default function StrategyClient({ data }: Props) {
   // Curator Safe — for direct proposals and execute
   const { safeAddress, isSafeOwner, hasRole } = useRoleCheck('curator')
   const proposeTx = useProposeSafeTransaction(safeAddress)
+  // Multi-send hook for batched Allocate & Sync (curator Safe must also hold OPERATOR_ROLE).
+  const proposeMultiSendTx = useProposeSafeMultiSendTransaction(safeAddress)
+  const operatorRoleCheck = useRoleCheck('operator')
 
   // Timelock Proposer Safe — for timelock submit
   const timelockProposerCheck = useRoleCheck('timelock_proposer')
@@ -69,9 +73,19 @@ export default function StrategyClient({ data }: Props) {
   const [strategyInput, setStrategyInput] = useState('')
   const [amountInput, setAmountInput] = useState('')
   const [selectedAsset, setSelectedAsset] = useState<string>(data.assets[0]?.asset ?? '')
+  // Composite key `${asset}|${description}` — descriptions can collide across assets,
+  // so the asset address is part of the identity. Empty string means no selection.
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState<string>('')
+  // Editable "New nav" override. Auto-populated from (current category nav + amountInDenom)
+  // whenever those inputs change; the curator can then override the WAD-denom NAV they
+  // want to sync. Stored as a decimal string (18-decimal WAD), parsed back into a bigint
+  // before encoding into the syncNavValue calldata.
+  const [newNavInput, setNewNavInput] = useState<string>('')
 
   const isWrongChain = isConnected && chainId !== 999
   const fundVaultAddress = getAddress(data.fundVaultAddress) as `0x${string}`
+  const fundNavFeedAddress = getAddress(data.fundNavFeedAddress) as `0x${string}`
+  const vaultManagerAddress = getAddress(data.vaultManagerAddress) as `0x${string}`
 
   // Find current asset context for decimals
   const currentAssetSummary = data.assets.find((a) => a.asset === selectedAsset)
@@ -79,6 +93,135 @@ export default function StrategyClient({ data }: Props) {
 
   // Strategies for the currently selected asset
   const allStrategies = currentAssetSummary?.strategies ?? []
+
+  // Flat list of NAV categories across every registered asset. Allocate & Sync
+  // credits one of these regardless of which asset is being moved — the WAD-denom
+  // invariant holds because both vault balance and category nav are in USD WAD.
+  const allNavCategories = useMemo(
+    () =>
+      data.assets.flatMap((a) =>
+        a.navCategories.map((c) => ({
+          asset: a.asset,
+          symbol: a.symbol,
+          decimals: a.decimals,
+          description: c.description,
+          nav: c.nav,
+          isActive: c.isActive,
+        })),
+      ),
+    [data.assets],
+  )
+  const selectedCategory = allNavCategories.find(
+    (c) => `${c.asset}|${c.description}` === selectedCategoryKey,
+  )
+
+  // ── Parse the amount once; all downstream reads/encodings share it ──────
+  const parsedAmountWei = useMemo((): bigint | null => {
+    if (!amountInput) return null
+    try {
+      return parseUnits(amountInput, currentDecimals)
+    } catch {
+      return null
+    }
+  }, [amountInput, currentDecimals])
+
+  // ── Live reads for the Allocate & Sync flow ──────────────────────────────
+  // Vault's tracked WAD-denom balance for the selected asset (NOT ERC-20 balanceOf).
+  // Allocate would revert if amountInDenom exceeds it.
+  const vaultBalanceQuery = useReadContract({
+    address: vaultManagerAddress,
+    abi: VAULT_MANAGER_ABI,
+    functionName: 'balanceOf',
+    args: [selectedAsset ? (getAddress(selectedAsset) as `0x${string}`) : '0x0000000000000000000000000000000000000000'],
+    query: { enabled: activeAction === 'allocateAndSync' && Boolean(selectedAsset) },
+  })
+
+  const amountInDenomQuery = useReadContract({
+    address: vaultManagerAddress,
+    abi: VAULT_MANAGER_ABI,
+    functionName: 'convertAssetToDenomByRatio',
+    args: parsedAmountWei !== null && selectedAsset
+      ? [getAddress(selectedAsset) as `0x${string}`, parsedAmountWei]
+      : undefined,
+    query: {
+      enabled: activeAction === 'allocateAndSync' && Boolean(selectedAsset) && parsedAmountWei !== null && parsedAmountWei > 0n,
+    },
+  })
+
+  const computeNavQuery = useReadContract({
+    address: vaultManagerAddress,
+    abi: VAULT_MANAGER_ABI,
+    functionName: 'computeNav',
+    query: { enabled: activeAction === 'allocateAndSync' },
+  })
+
+  const amountInDenom = amountInDenomQuery.data ?? null
+  const computedNav = computeNavQuery.data
+  const vaultDenomBalance = vaultBalanceQuery.data ?? null
+
+  const newCategoryNav = useMemo((): bigint | null => {
+    if (!selectedCategory || amountInDenom === null) return null
+    try {
+      return BigInt(selectedCategory.nav) + amountInDenom
+    } catch {
+      return null
+    }
+  }, [selectedCategory, amountInDenom])
+
+  // Auto-populate the editable New nav input whenever the inferred default changes
+  // (i.e., the user changes amount, category, or asset). Any prior manual override
+  // is dropped — the curator should re-edit if they want a non-default value for
+  // the new state. Clearing happens when the default becomes unavailable.
+  useEffect(() => {
+    if (newCategoryNav === null) {
+      setNewNavInput('')
+      return
+    }
+    setNewNavInput(formatUnits(newCategoryNav, 18))
+  }, [newCategoryNav])
+
+  // Parse the (possibly user-edited) New nav input back into a bigint. parseUnits
+  // throws on malformed input; we fall back to the auto-computed value so the
+  // calldata stays well-formed even mid-typing.
+  const effectiveNewNav = useMemo((): bigint | null => {
+    if (newNavInput.trim() === '') return newCategoryNav
+    try {
+      return parseUnits(newNavInput, 18)
+    } catch {
+      return null
+    }
+  }, [newNavInput, newCategoryNav])
+
+  const isNewNavInvalid = newNavInput.trim() !== '' && effectiveNewNav === null
+
+  // Projected PPS factors in the curator's (possibly overridden) New nav. The
+  // net NAV delta is: FundNavFeed gain (effectiveNewNav − currentCategoryNav)
+  // minus vault loss (amountInDenom). When the curator keeps the auto-computed
+  // value, those two terms cancel and the projected PPS equals the current PPS.
+  // claimable/pending are untouched by Allocate & Sync, so the same delta
+  // applies to both navDenomination and effNavDenomination.
+  //
+  // PPS divisor is the *effective* supply: totalSupply − globalRedeemShares.
+  // Shares already queued for redemption don't participate in live holders'
+  // claim on the effective NAV, matching the on-chain computeNav() formula.
+  const projectedPps = useMemo((): bigint | null => {
+    if (!computedNav) return null
+    const effectiveSupply = computedNav.totalSupply - computedNav.globalRedeemShares
+    if (effectiveSupply <= 0n) return computedNav.ppsValue
+    let effDenom = computedNav.effNavDenomination
+    if (selectedCategory && amountInDenom !== null && effectiveNewNav !== null) {
+      const navDelta = effectiveNewNav - BigInt(selectedCategory.nav) - amountInDenom
+      effDenom += navDelta
+    }
+    if (effDenom < 0n) return 0n
+    return (effDenom * 10n ** 18n) / effectiveSupply
+  }, [computedNav, selectedCategory, amountInDenom, effectiveNewNav])
+
+  const insufficientBalance =
+    activeAction === 'allocateAndSync'
+    && amountInDenom !== null
+    && vaultDenomBalance !== null
+    && amountInDenom > vaultDenomBalance
 
   // ── Reactive calldata computation ────────────────────────────────────────
   const encodedCalldata = useMemo((): `0x${string}` | undefined => {
@@ -99,11 +242,55 @@ export default function StrategyClient({ data }: Props) {
         case 'deallocate':
           if (!amountInput) return undefined
           return encodeFunctionData({ abi: FUND_VAULT_ABI, functionName: 'deallocate', args: [addr, parseUnits(amountInput, currentDecimals)] })
+        case 'allocateAndSync':
+          // Calldata array is built separately (`multiSendCalls`) — this useMemo
+          // returns undefined so timelock checks/single-tx propose path skip it.
+          return undefined
       }
     } catch {
       return undefined
     }
   }, [activeAction, strategyInput, amountInput, currentDecimals])
+
+  // ── MultiSend calldata for Allocate & Sync ──────────────────────────────
+  const multiSendCalls = useMemo(() => {
+    if (activeAction !== 'allocateAndSync') return null
+    if (!strategyInput || parsedAmountWei === null || parsedAmountWei <= 0n) return null
+    if (!selectedAsset || !selectedCategory) return null
+    if (effectiveNewNav === null) return null
+    try {
+      const strategyAddr = getAddress(strategyInput)
+      // syncNavValue is keyed by the *category's* asset, not the allocation
+      // asset — categories can be credited cross-asset (Allocate from USDe,
+      // credit a USDC category) and the (asset, description) pair must match
+      // an existing on-chain entry.
+      const categoryAssetAddr = getAddress(selectedCategory.asset) as `0x${string}`
+      return [
+        {
+          to: fundVaultAddress,
+          data: encodeFunctionData({
+            abi: FUND_VAULT_ABI,
+            functionName: 'allocate',
+            args: [strategyAddr, parsedAmountWei],
+          }),
+        },
+        {
+          to: fundNavFeedAddress,
+          data: encodeFunctionData({
+            abi: FUND_NAV_FEED_ABI,
+            functionName: 'syncNavValue',
+            args: [categoryAssetAddr, selectedCategory.description, effectiveNewNav],
+          }),
+        },
+        {
+          to: vaultManagerAddress,
+          data: encodeFunctionData({ abi: VAULT_MANAGER_ABI, functionName: 'updateNav' }),
+        },
+      ] as const
+    } catch {
+      return null
+    }
+  }, [activeAction, strategyInput, parsedAmountWei, selectedAsset, selectedCategory, effectiveNewNav, fundVaultAddress, fundNavFeedAddress, vaultManagerAddress])
 
   // ── Timelock status query ────────────────────────────────────────────────
   const isTimelockable = activeAction ? TIMELOCKABLE_ACTIONS.has(activeAction) : false
@@ -145,10 +332,17 @@ export default function StrategyClient({ data }: Props) {
     timelockProposeTx.mutate({ to: fundVaultAddress, data: calldata })
   }
 
-  const needsAmount = activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'deallocate'
+  function handleProposeAllocateAndSync() {
+    if (!multiSendCalls) return
+    proposeMultiSendTx.reset()
+    proposeMultiSendTx.mutate({ txs: multiSendCalls as unknown as { to: `0x${string}`; data: `0x${string}` }[] })
+  }
+
+  const needsAmount = activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'allocateAndSync' || activeAction === 'deallocate'
   const needsAssetSelect = needsAmount || activeAction === 'removeStrategy'
-  const needsStrategySelect = activeAction === 'removeStrategy' || activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'deallocate'
+  const needsStrategySelect = activeAction === 'removeStrategy' || activeAction === 'setStrategyCap' || activeAction === 'allocate' || activeAction === 'allocateAndSync' || activeAction === 'deallocate'
   const needsStrategyInput = activeAction === 'addStrategy'
+  const needsCategorySelect = activeAction === 'allocateAndSync'
 
   // ── Button config ────────────────────────────────────────────────────────
 
@@ -173,6 +367,20 @@ export default function StrategyClient({ data }: Props) {
       return { label: 'Waiting for timelock...', disabled: true, className: disabledStyle, onClick: () => {} }
     }
 
+    // Allocate & Sync — separate path uses MultiSend hook (still curator Safe)
+    if (activeAction === 'allocateAndSync') {
+      if (!isConnected) return { label: 'Connect wallet', disabled: true, className: disabledStyle, onClick: () => {} }
+      if (isWrongChain) return { label: 'Wrong network', disabled: true, className: `${base} bg-amber-100 text-amber-600 cursor-not-allowed`, onClick: () => {} }
+      if (!isSafeOwner) return { label: 'Not a Safe owner', disabled: true, className: disabledStyle, onClick: () => {} }
+      if (!hasRole) return { label: 'Safe lacks CURATOR_ROLE', disabled: true, className: disabledStyle, onClick: () => {} }
+      if (insufficientBalance) return { label: 'Insufficient vault balance', disabled: true, className: disabledStyle, onClick: () => {} }
+      if (proposeMultiSendTx.isPending) return { label: 'Confirm in wallet...', disabled: true, className: `${base} bg-blue-600 text-white`, onClick: () => {} }
+      if (proposeMultiSendTx.isSuccess) return { label: 'Proposed', disabled: true, className: `${base} bg-green-600 text-white cursor-not-allowed`, onClick: () => {} }
+      if (proposeMultiSendTx.isError) return { label: 'Failed - Retry', disabled: false, className: `${base} bg-red-600 text-white hover:bg-red-700`, onClick: handleProposeAllocateAndSync }
+      const ready = multiSendCalls !== null
+      return { label: 'Propose Allocate & Sync via Safe', disabled: !ready, className: ready ? `${base} bg-blue-600 text-white hover:bg-blue-700` : disabledStyle, onClick: handleProposeAllocateAndSync }
+    }
+
     // Execute or direct propose — uses curator Safe
     if (!isConnected) return { label: 'Connect wallet', disabled: true, className: disabledStyle, onClick: () => {} }
     if (isWrongChain) return { label: 'Wrong network', disabled: true, className: `${base} bg-amber-100 text-amber-600 cursor-not-allowed`, onClick: () => {} }
@@ -190,7 +398,9 @@ export default function StrategyClient({ data }: Props) {
   const btnConfig = getButtonConfig()
 
   // Active proposer for showing status feedback
-  const activeProposer = needsSubmit ? timelockProposeTx : proposeTx
+  const activeProposer = activeAction === 'allocateAndSync'
+    ? proposeMultiSendTx
+    : (needsSubmit ? timelockProposeTx : proposeTx)
 
   return (
     <div className="space-y-8">
@@ -228,7 +438,9 @@ export default function StrategyClient({ data }: Props) {
                   setActiveAction(activeAction === action ? null : action)
                   setStrategyInput('')
                   setAmountInput('')
+                  setSelectedCategoryKey('')
                   proposeTx.reset()
+                  proposeMultiSendTx.reset()
                   timelockProposeTx.reset()
                 }}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -257,7 +469,12 @@ export default function StrategyClient({ data }: Props) {
                       setSelectedAsset(e.target.value)
                       setStrategyInput('')
                       setAmountInput('')
+                      // selectedCategoryKey intentionally preserved — the
+                      // category dropdown lists categories across all assets,
+                      // so the asset context (which only drives decimals and
+                      // strategy filtering) doesn't need to invalidate it.
                       proposeTx.reset()
+                      proposeMultiSendTx.reset()
                       timelockProposeTx.reset()
                     }}
                     className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
@@ -314,9 +531,20 @@ export default function StrategyClient({ data }: Props) {
               {/* Amount input */}
               {needsAmount && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                    Amount ({currentAssetSummary?.symbol ?? 'tokens'})
-                  </label>
+                  <div className="mb-1 flex items-baseline justify-between">
+                    <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                      Amount ({currentAssetSummary?.symbol ?? 'tokens'})
+                    </label>
+                    {currentAssetSummary && (
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                        FundVault balance:{' '}
+                        <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                          {formatTokenAmount(currentAssetSummary.idleAssets, currentAssetSummary.decimals)}{' '}
+                          {currentAssetSummary.symbol}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     placeholder="0.0"
@@ -324,6 +552,131 @@ export default function StrategyClient({ data }: Props) {
                     onChange={(e) => setAmountInput(e.target.value)}
                     className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
                   />
+                </div>
+              )}
+
+              {/* NAV Category selector — Allocate & Sync only */}
+              {needsCategorySelect && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                    NAV Category to credit
+                  </label>
+                  {allNavCategories.length === 0 ? (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      No FundNavFeed categories registered — add one in the NAV admin page first.
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedCategoryKey}
+                      onChange={(e) => {
+                        setSelectedCategoryKey(e.target.value)
+                        proposeMultiSendTx.reset()
+                      }}
+                      className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-white"
+                    >
+                      <option value="">Select a NAV category...</option>
+                      {data.assets.map((a) => {
+                        const cats = a.navCategories
+                        if (cats.length === 0) return null
+                        return (
+                          <optgroup key={a.asset} label={a.symbol}>
+                            {cats.map((c) => (
+                              <option key={`${a.asset}|${c.description}`} value={`${a.asset}|${c.description}`}>
+                                {a.symbol} — {c.description}
+                                {c.isActive ? '' : ' (inactive)'} — current nav {formatDenomination(c.nav, 6)}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )
+                      })}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {/* Live PPS preview — Allocate & Sync only */}
+              {activeAction === 'allocateAndSync' && computedNav && (
+                <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs dark:border-neutral-700 dark:bg-neutral-800/50">
+                  <div className="mb-2 text-neutral-500 dark:text-neutral-400">
+                    Projected after Allocate &amp; Sync executes (total NAV preserved — vault decreases by the same amount FundNavFeed gains):
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-neutral-500 dark:text-neutral-400">Current PPS</p>
+                      {/* Full WAD precision (trailing zeros stripped) — PPS is consumed
+                          on-chain at 1e18 scale; rounding the display hides the precise value. */}
+                      <p className="mt-0.5 break-all font-mono font-semibold text-neutral-900 dark:text-white">
+                        {formatTokenAmount(computedNav.ppsValue.toString(), 18, 18)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-neutral-500 dark:text-neutral-400">Projected PPS</p>
+                      <p className="mt-0.5 break-all font-mono font-semibold text-neutral-900 dark:text-white">
+                        {projectedPps !== null ? formatTokenAmount(projectedPps.toString(), 18, 18) : '—'}
+                      </p>
+                    </div>
+                  </div>
+                  {amountInDenom !== null && selectedCategory && newCategoryNav !== null && (
+                    <div className="mt-3 grid grid-cols-2 gap-3 border-t border-neutral-200 pt-2 dark:border-neutral-700">
+                      <div>
+                        <p className="text-neutral-500 dark:text-neutral-400">Amount (denom)</p>
+                        <p className="mt-0.5 font-mono text-neutral-900 dark:text-white">
+                          {formatDenomination(amountInDenom.toString(), 6)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-neutral-500 dark:text-neutral-400">
+                          New nav for &ldquo;{selectedCategory.symbol} — {selectedCategory.description}&rdquo;
+                        </p>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <span className="font-mono text-neutral-900 dark:text-white">
+                            {formatDenomination(selectedCategory.nav, 6)}
+                          </span>
+                          <span className="text-neutral-400 dark:text-neutral-500">→</span>
+                          <div className="relative flex-1">
+                            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500 dark:text-neutral-400">
+                              $
+                            </span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={newNavInput}
+                              onChange={(e) => {
+                                setNewNavInput(e.target.value)
+                                proposeMultiSendTx.reset()
+                              }}
+                              className={`w-full rounded-md border bg-white py-1 pl-5 pr-2 font-mono text-xs dark:bg-neutral-800 dark:text-white ${
+                                isNewNavInvalid
+                                  ? 'border-red-500 dark:border-red-500'
+                                  : 'border-neutral-300 dark:border-neutral-600'
+                              }`}
+                              aria-label="New nav (WAD denom)"
+                            />
+                          </div>
+                        </div>
+                        {isNewNavInvalid && (
+                          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                            Invalid number — cannot parse as 18-decimal WAD value.
+                          </p>
+                        )}
+                        {!isNewNavInvalid && effectiveNewNav !== null && effectiveNewNav !== newCategoryNav && (
+                          <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                            Manual override — differs from the auto-computed {formatDenomination(newCategoryNav.toString(), 6)}.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {insufficientBalance && (
+                    <p className="mt-2 text-red-600 dark:text-red-400">
+                      Insufficient vault balance — convertAssetToDenomByRatio returns more than VaultManager.balanceOf(asset).
+                    </p>
+                  )}
+                  {hasRole && !operatorRoleCheck.hasRole && (
+                    <p className="mt-2 text-amber-600 dark:text-amber-400">
+                      Note: curator Safe does not appear to hold OPERATOR_ROLE. The batch will queue but may revert on execution.
+                    </p>
+                  )}
                 </div>
               )}
 

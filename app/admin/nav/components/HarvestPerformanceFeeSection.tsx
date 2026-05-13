@@ -26,6 +26,18 @@ function formatTimestamp(seconds: string): string {
   return new Date(ms).toLocaleString()
 }
 
+const WAD = 10n ** 18n
+
+function computePostMintPps(
+  navDenomination: string,
+  effectiveSupply: string,
+  sharesToMint: string,
+): string | null {
+  const newEffSupply = BigInt(effectiveSupply) + BigInt(sharesToMint)
+  if (newEffSupply === 0n) return null
+  return ((BigInt(navDenomination) * WAD) / newEffSupply).toString()
+}
+
 export default function HarvestPerformanceFeeSection({ data, canPropose, isConnected }: Props) {
   const { chainId } = useAccount()
   const config = useVaultConfig()
@@ -134,13 +146,26 @@ export default function HarvestPerformanceFeeSection({ data, canPropose, isConne
           <span>
             <span className="text-neutral-500 dark:text-neutral-400">Fee:</span>{' '}
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
-              {formatDenomination(data.performanceFeePreview.feeAmount, 2)}
+              {formatDenomination(data.performanceFeePreview.feeAmount, 6)}
             </span>
           </span>
           <span>
             <span className="text-neutral-500 dark:text-neutral-400">Shares to mint:</span>{' '}
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
               {formatTokenAmount(data.performanceFeePreview.sharesToMint, 18, 6)}
+            </span>
+          </span>
+          <span>
+            <span className="text-neutral-500 dark:text-neutral-400">PPS after harvest:</span>{' '}
+            <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
+              {(() => {
+                const newPps = computePostMintPps(
+                  data.liveNavDenomination,
+                  data.effectiveSupply,
+                  data.performanceFeePreview.sharesToMint,
+                )
+                return newPps === null ? '—' : formatTokenAmount(newPps, 18, 6)
+              })()}
             </span>
           </span>
         </div>

@@ -2,6 +2,7 @@
 
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
 import { formatTokenAmount } from '@/lib/format'
+import { useLiveNavSnapshot } from '@/lib/hooks/use-live-nav'
 import DecodedCalldata from './DecodedCalldata'
 import SafeTxActions from './SafeTxActions'
 
@@ -16,11 +17,77 @@ function truncate(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
+const NAV_TOUCHING_METHODS = new Set(['allocate', 'deallocate', 'syncNavValue', 'updateNav'])
+
+/**
+ * Returns true when this tx (or any of its multiSend inner calls) writes to
+ * vault state that materially moves PPS — the executor benefits from seeing
+ * the live PPS / liveNav before they execute.
+ */
+function touchesNav(tx: PendingSafeTx): boolean {
+  const d = tx.dataDecoded
+  if (!d) return false
+  if (NAV_TOUCHING_METHODS.has(d.method)) return true
+  return (d.multiSendInner ?? []).some((c) => c.decoded && NAV_TOUCHING_METHODS.has(c.decoded.method))
+}
+
 export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
+  const showLiveNav = touchesNav(tx)
+  const liveNav = useLiveNavSnapshot({ enabled: showLiveNav })
+
   return (
     <div className="space-y-4 border-t border-neutral-200 px-4 py-4 dark:border-neutral-700">
       {/* Decoded calldata */}
       <DecodedCalldata decoded={tx.dataDecoded} rawData={tx.data} to={tx.to} />
+
+      {/* Live NAV snapshot — only for NAV-touching txs. Fetched fresh on every
+          render of the expanded card so executors see the current state. */}
+      {showLiveNav && (
+        <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs dark:border-neutral-700 dark:bg-neutral-800/50">
+          <div className="mb-1.5 flex items-center justify-between text-neutral-500 dark:text-neutral-400">
+            <span>Live VaultManager.computeNav() — pre-execution snapshot</span>
+            {liveNav.isLoading && <span className="text-neutral-400">loading…</span>}
+            {liveNav.isError && <span className="text-red-500">read failed</span>}
+          </div>
+          {liveNav.data ? (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
+              <div>
+                <p className="text-neutral-500 dark:text-neutral-400">Current PPS (stored)</p>
+                {/* Full WAD precision (trailing zeros stripped) — PPS is consumed on-chain
+                    at 1e18 scale, so rounding the display would hide the precise value. */}
+                <p className="mt-0.5 break-all font-mono text-neutral-900 dark:text-white">
+                  {formatTokenAmount(liveNav.data.storedPps.toString(), 18, 18)}
+                </p>
+              </div>
+              <div>
+                <p className="text-neutral-500 dark:text-neutral-400">Live PPS</p>
+                <p className="mt-0.5 break-all font-mono text-neutral-900 dark:text-white">
+                  {formatTokenAmount(liveNav.data.livePpsValue.toString(), 18, 18)}
+                  {!liveNav.data.isValidPps && (
+                    <span className="ml-1 text-red-500">(invalid)</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-neutral-500 dark:text-neutral-400">Live NAV (denom)</p>
+                <p className="mt-0.5 font-mono text-neutral-900 dark:text-white">
+                  ${formatTokenAmount(liveNav.data.navDenomination.toString(), 18, 6)}
+                </p>
+              </div>
+              <div>
+                <p className="text-neutral-500 dark:text-neutral-400">Effective NAV</p>
+                <p className="mt-0.5 font-mono text-neutral-900 dark:text-white">
+                  ${formatTokenAmount(liveNav.data.effNavDenomination.toString(), 18, 6)}
+                </p>
+              </div>
+            </div>
+          ) : (
+            !liveNav.isLoading && !liveNav.isError && (
+              <p className="text-neutral-400">No data.</p>
+            )
+          )}
+        </div>
+      )}
 
       {tx.fulfillPrecheck && (
         <div className={`rounded-md border px-3 py-2 text-sm ${tx.fulfillPrecheck.isInsufficient

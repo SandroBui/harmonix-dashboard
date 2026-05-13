@@ -478,6 +478,70 @@ export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
   })
 }
 
+// ─── Propose a Multi-Call (Batched) Safe Transaction ─────────────────────────
+//
+// Wraps N inner calls into a single Safe proposal. The Safe Protocol Kit detects
+// the array length and routes through the canonical MultiSendCallOnly contract
+// for the configured chain. Inner calls execute atomically on Safe execution —
+// any revert rolls back the whole batch.
+
+export type SafeBatchCall = {
+  to: `0x${string}`
+  data: `0x${string}`
+  value?: string
+}
+
+export function useProposeSafeMultiSendTransaction(safeAddress?: `0x${string}`) {
+  const queryClient = useQueryClient()
+  const { address, connector } = useAccount()
+  const config = useVaultConfig()
+  const addr = safeAddress ?? getDefaultSafeAddress(config)
+
+  return useMutation({
+    mutationFn: async ({ txs }: { txs: SafeBatchCall[] }) => {
+      if (!address) throw new Error('Wallet not connected')
+      if (!connector) throw new Error('Connector not ready')
+      if (txs.length === 0) throw new Error('No transactions to propose')
+
+      const provider = await connector.getProvider()
+      const protocolKit = await initProtocolKit(provider, address, addr)
+      const apiKit = getApiKit()
+
+      const pending = await apiKit.getPendingTransactions(addr)
+      const pendingNonces = (pending.results as SafeMultisigTransactionResponse[]).map((tx) => Number(tx.nonce))
+      const nextNonce = pendingNonces.length > 0 ? Math.max(...pendingNonces) + 1 : undefined
+
+      const safeTransaction = await protocolKit.createTransaction({
+        transactions: txs.map((tx) => ({
+          to: getAddress(tx.to),
+          data: tx.data,
+          value: tx.value ?? '0',
+        })),
+        ...(nextNonce !== undefined ? { options: { nonce: nextNonce } } : {}),
+      })
+
+      const signedTx = await protocolKit.signTransaction(safeTransaction)
+      const safeTxHash = await protocolKit.getTransactionHash(signedTx)
+
+      const sig = signedTx.getSignature(address.toLowerCase())
+      if (!sig) throw new Error('Failed to generate signature')
+
+      await apiKit.proposeTransaction({
+        safeAddress: addr,
+        safeTransactionData: signedTx.data,
+        safeTxHash,
+        senderAddress: address,
+        senderSignature: sig.data,
+      })
+
+      return { safeTxHash }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+    },
+  })
+}
+
 // ─── Cancel (Reject) a Pending Transaction ───────────────────────────────────
 
 export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {

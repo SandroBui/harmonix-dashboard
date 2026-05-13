@@ -48,6 +48,10 @@ export type NavPageData = {
   liveEffNavDenomination: string
   livePpsValue: string
   liveIsValidPps: boolean
+  // Current effective supply (totalSupply - globalRedeemShares, 1e18 scale).
+  // PPS = liveNavDenomination * 1e18 / effectiveSupply, so post-harvest PPS can be
+  // computed locally as navDenomination * 1e18 / (effectiveSupply + sharesToMint).
+  effectiveSupply: string
   // Stored (last updateNav()) values
   storedPps: string
   lastNavUpdated: string // seconds timestamp as string
@@ -323,6 +327,7 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
     liveEffNavDenomination: navSnapshot.effNavDenomination.toString(),
     livePpsValue: navSnapshot.ppsValue.toString(),
     liveIsValidPps: navSnapshot.isValidPps,
+    effectiveSupply: (navSnapshot.totalSupply - navSnapshot.globalRedeemShares).toString(),
     storedPps: storedPps.toString(),
     lastNavUpdated: lastNavUpdatedValue.toString(),
     managementFeeRate: managementFeeRateValue.toString(),

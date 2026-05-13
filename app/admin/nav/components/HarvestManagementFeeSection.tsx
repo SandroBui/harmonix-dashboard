@@ -26,6 +26,21 @@ function formatTimestamp(seconds: string): string {
   return new Date(ms).toLocaleString()
 }
 
+const WAD = 10n ** 18n
+
+// PPS after minting `sharesToMint` to the fee receiver. NAV is unchanged by a
+// fee harvest (it's paid in shares, not assets), so new PPS = navDenom * 1e18 /
+// (effectiveSupply + sharesToMint). Returns null if the denominator is zero.
+function computePostMintPps(
+  navDenomination: string,
+  effectiveSupply: string,
+  sharesToMint: string,
+): string | null {
+  const newEffSupply = BigInt(effectiveSupply) + BigInt(sharesToMint)
+  if (newEffSupply === 0n) return null
+  return ((BigInt(navDenomination) * WAD) / newEffSupply).toString()
+}
+
 export default function HarvestManagementFeeSection({ data, canPropose, isConnected }: Props) {
   const { chainId } = useAccount()
   const config = useVaultConfig()
@@ -118,13 +133,26 @@ export default function HarvestManagementFeeSection({ data, canPropose, isConnec
           <span>
             <span className="text-neutral-500 dark:text-neutral-400">Fee:</span>{' '}
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
-              {formatDenomination(data.managementFeePreview.feeAmount, 2)}
+              {formatDenomination(data.managementFeePreview.feeAmount, 6)}
             </span>
           </span>
           <span>
             <span className="text-neutral-500 dark:text-neutral-400">Shares to mint:</span>{' '}
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
               {formatTokenAmount(data.managementFeePreview.sharesToMint, 18, 6)}
+            </span>
+          </span>
+          <span>
+            <span className="text-neutral-500 dark:text-neutral-400">PPS after harvest:</span>{' '}
+            <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
+              {(() => {
+                const newPps = computePostMintPps(
+                  data.liveNavDenomination,
+                  data.effectiveSupply,
+                  data.managementFeePreview.sharesToMint,
+                )
+                return newPps === null ? '—' : formatTokenAmount(newPps, 18, 6)
+              })()}
             </span>
           </span>
         </div>

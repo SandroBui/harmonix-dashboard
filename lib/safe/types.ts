@@ -37,6 +37,21 @@ export type FulfillPrecheck = {
 export type DataDecoded = {
   method: string
   parameters: DecodedParam[]
+  /**
+   * Populated only for Safe `multiSend(bytes)` calls — one entry per inner
+   * call packed in the `transactions` blob. Each entry carries the raw target
+   * plus a best-effort decoded form using known ABIs.
+   */
+  multiSendInner?: MultiSendInnerCall[]
+}
+
+export type MultiSendInnerCall = {
+  /** 0 = CALL, 1 = DELEGATECALL */
+  operation: number
+  to: string
+  value: string
+  data: string
+  decoded: DataDecoded | null
 }
 
 export type DecodedParam = {

@@ -1,10 +1,10 @@
-import { decodeFunctionData, toFunctionSelector } from 'viem'
+import { decodeFunctionData, toFunctionSelector, getAddress } from 'viem'
 import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI, HA_TIMELOCK_CONTROLLER_ABI } from '@/lib/abis'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
 import { getApiKit } from './api-kit'
-import type { DataDecoded, DecodedParam } from './types'
+import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
 const ROLE_HASH_TO_LABEL: Record<string, string> = Object.fromEntries(
@@ -35,6 +35,10 @@ export function resolveSelector(selector: string): string {
  *  2. Local known ABIs as fallback (vault + ERC-20)
  *
  * Returns null when decoding is not possible (e.g. raw ETH transfer).
+ *
+ * When the call is a Safe `multiSend(bytes)`, the returned `DataDecoded` is
+ * augmented with `multiSendInner` — one entry per inner call, each decoded
+ * via the local ABI fallback (synchronous, no extra service round-trips).
  */
 export async function decodeTransactionData(
   data: string,
@@ -42,17 +46,37 @@ export async function decodeTransactionData(
 ): Promise<DataDecoded | null> {
   if (!data || data === '0x') return null
 
+  let decoded: DataDecoded | null = null
+
   // ── 1. Safe Transaction Service decoder ────────────────────────────────
   try {
     const apiKit = getApiKit()
-    // The SDK returns the same shape we need
-    const decoded = await apiKit.decodeData(data, to) as DataDecoded
-    return decoded
+    decoded = await apiKit.decodeData(data, to) as DataDecoded
   } catch {
     // Service may not recognise the ABI — fall through to local decoding
   }
 
   // ── 2. Local ABI decoding ───────────────────────────────────────────────
+  if (!decoded) {
+    decoded = decodeLocally(data)
+  }
+
+  // ── 3. Expand multiSend(bytes) inner calls ─────────────────────────────
+  if (decoded?.method === 'multiSend') {
+    const txsParam = decoded.parameters.find((p) => p.name === 'transactions')?.value
+    if (txsParam) {
+      decoded.multiSendInner = parseMultiSendInner(txsParam)
+    }
+  }
+
+  return decoded
+}
+
+/**
+ * Synchronous local-ABI decoder. Iterates the known ABI list and returns the
+ * first successful match. Returns null when no ABI accepts the calldata.
+ */
+function decodeLocally(data: string): DataDecoded | null {
   const knownAbis = [
     VAULT_ASSET_ABI,
     FUND_NAV_FEED_ABI,
@@ -72,7 +96,6 @@ export async function decodeTransactionData(
         data: data as `0x${string}`,
       })
 
-      // Find the matching function entry to get param names + types
       const funcEntry = (abi as readonly { type: string; name?: string; inputs?: readonly { name: string; type: string }[] }[])
         .find((item) => item.type === 'function' && item.name === functionName)
 
@@ -93,6 +116,49 @@ export async function decodeTransactionData(
   }
 
   return null
+}
+
+/**
+ * Parses the packed `transactions` blob that Safe MultiSend consumes.
+ * Each entry is: operation(1) || to(20) || value(32) || dataLength(32) || data(dataLength).
+ * Decoding of the inner `data` field uses the local-ABI fallback so this stays
+ * synchronous; if no ABI matches, `decoded` is left null and the raw hex is
+ * still exposed via `data`.
+ */
+function parseMultiSendInner(bytesHex: string): MultiSendInnerCall[] {
+  const hex = bytesHex.startsWith('0x') ? bytesHex.slice(2) : bytesHex
+  const calls: MultiSendInnerCall[] = []
+  let i = 0
+  while (i < hex.length) {
+    // Each unit is 2 hex chars per byte.
+    if (i + (1 + 20 + 32 + 32) * 2 > hex.length) break
+    const operation = parseInt(hex.slice(i, i + 2), 16)
+    i += 2
+    const to = `0x${hex.slice(i, i + 40)}`
+    i += 40
+    const value = BigInt(`0x${hex.slice(i, i + 64)}`).toString()
+    i += 64
+    const dataLen = parseInt(hex.slice(i, i + 64), 16)
+    i += 64
+    const dataHex = `0x${hex.slice(i, i + dataLen * 2)}`
+    i += dataLen * 2
+
+    let decoded: DataDecoded | null = null
+    try {
+      decoded = decodeLocally(dataHex)
+    } catch {
+      decoded = null
+    }
+
+    calls.push({
+      operation,
+      to: getAddress(to),
+      value,
+      data: dataHex,
+      decoded,
+    })
+  }
+  return calls
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +185,13 @@ export function summarizeDecodedData(
   }
 
   const { method, parameters } = decoded
+
+  if (method === 'multiSend') {
+    const inner = decoded.multiSendInner ?? []
+    if (inner.length === 0) return 'MultiSend (empty)'
+    const labels = inner.map((c) => c.decoded?.method ?? `raw call to ${truncate(c.to)}`)
+    return `MultiSend (${inner.length}): ${labels.join(' → ')}`
+  }
 
   if (method === 'fulfillRedeem') {
     // v0.6.0: signature is fulfillRedeem(address[] controllers) — totalAmount is no longer

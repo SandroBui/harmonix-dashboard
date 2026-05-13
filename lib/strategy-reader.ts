@@ -1,4 +1,4 @@
-import { HA_VAULT_READER_ABI, STRATEGY_ABI, HA_PORTFOLIO_MARGIN_ABI } from './contracts'
+import { HA_VAULT_READER_ABI, STRATEGY_ABI, HA_PORTFOLIO_MARGIN_ABI, FUND_NAV_FEED_ABI } from './contracts'
 import { getPublicClient } from './client'
 import { fetchAssetMetadataForAddresses } from './asset-metadata'
 import type { VaultGroupConfig } from './vault-group-config'
@@ -29,6 +29,12 @@ export type StrategyData = {
   lendingBalance?: string   // PM lending supply, in EVM decimals
 }
 
+export type NavCategoryEntry = {
+  description: string
+  nav: string       // raw uint256 from FundNavFeed.categories(asset)
+  isActive: boolean
+}
+
 export type AssetStrategySummary = {
   asset: string
   symbol: string
@@ -40,10 +46,16 @@ export type AssetStrategySummary = {
   totalManagedAssets: string
   deployedAssets: string
   strategies: StrategyData[]
+  // FundNavFeed categories registered for this asset — sourced from
+  // FundNavFeed.categories(asset). Used by the Allocate & Sync flow to populate
+  // the category dropdown and to pre-read the existing per-category nav.
+  navCategories: NavCategoryEntry[]
 }
 
 export type StrategyPageData = {
   fundVaultAddress: string
+  fundNavFeedAddress: string
+  vaultManagerAddress: string
   assets: AssetStrategySummary[]
   fetchedAt: number
 }
@@ -64,22 +76,45 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
   }
 
   // ── Batch 1: global state ────────────────────────────────────────────────
-  const [assets, fundVaultAddress] = await Promise.all([
+  const [assets, fundVaultAddress, fundNavFeedAddress] = await Promise.all([
     read('getRegisteredAssets') as Promise<readonly `0x${string}`[]>,
     read('getFundVault') as Promise<`0x${string}`>,
+    read('getFundNav') as Promise<`0x${string}`>,
   ])
 
+  // VaultManager is reachable from FundNavFeed (same chain used elsewhere in
+  // the dashboard — see nav-reader.ts:85-90).
+  const vaultManagerAddress = await publicClient.readContract({
+    address: fundNavFeedAddress,
+    abi: FUND_NAV_FEED_ABI,
+    functionName: 'vaultManager',
+  }) as `0x${string}`
+
   if (assets.length === 0) {
-    return { fundVaultAddress: fundVaultAddress.toLowerCase(), assets: [], fetchedAt: Date.now() }
+    return {
+      fundVaultAddress: fundVaultAddress.toLowerCase(),
+      fundNavFeedAddress: fundNavFeedAddress.toLowerCase(),
+      vaultManagerAddress: vaultManagerAddress.toLowerCase(),
+      assets: [],
+      fetchedAt: Date.now(),
+    }
   }
 
   // ── Batch 2: per-asset data ──────────────────────────────────────────────
-  const [strategyLists, idleAmounts, idleDenoms, totalManagedAmounts, assetMetadata] = await Promise.all([
+  const [strategyLists, idleAmounts, idleDenoms, totalManagedAmounts, assetMetadata, categoriesPerAsset] = await Promise.all([
     Promise.all(assets.map((asset) => read('getStrategies', [asset]) as Promise<readonly `0x${string}`[]>)),
     Promise.all(assets.map((asset) => read('getIdleAssets', [asset]) as Promise<bigint>)),
     Promise.all(assets.map((asset) => read('getAssetDenomBalance', [asset]) as Promise<bigint>)),
     Promise.all(assets.map((asset) => read('getTotalManagedAssets', [asset]) as Promise<bigint>)),
     fetchAssetMetadataForAddresses(assets),
+    Promise.all(assets.map((asset) =>
+      publicClient.readContract({
+        address: fundNavFeedAddress,
+        abi: FUND_NAV_FEED_ABI,
+        functionName: 'categories',
+        args: [asset],
+      }) as Promise<readonly { isActive: boolean; description: string; nav: bigint }[]>
+    )),
   ])
 
   // ── Batch 3: per-strategy data ───────────────────────────────────────────
@@ -176,6 +211,13 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
       }
     })
 
+    const rawCategories = categoriesPerAsset[i] ?? []
+    const navCategories: NavCategoryEntry[] = rawCategories.map((cat) => ({
+      description: cat.description,
+      nav: cat.nav.toString(),
+      isActive: cat.isActive,
+    }))
+
     return {
       asset: assetAddr,
       symbol: meta.symbol,
@@ -185,11 +227,14 @@ export async function getStrategyPageData(config: VaultGroupConfig): Promise<Str
       totalManagedAssets: totalManaged.toString(),
       deployedAssets: deployed.toString(),
       strategies,
+      navCategories,
     }
   })
 
   return {
     fundVaultAddress: fundVaultAddress.toLowerCase(),
+    fundNavFeedAddress: fundNavFeedAddress.toLowerCase(),
+    vaultManagerAddress: vaultManagerAddress.toLowerCase(),
     assets: assetSummaries,
     fetchedAt: Date.now(),
   }

@@ -46,6 +46,60 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
       {/* Parameters */}
       <div className="space-y-1.5">
         {decoded.parameters.map((param, i) => {
+          // multiSend: replace the raw `transactions` bytes blob with a list
+          // of decoded inner calls so reviewers can see each step.
+          if (decoded.method === 'multiSend' && param.name === 'transactions' && decoded.multiSendInner) {
+            return (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <span className="w-32 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
+                  {param.name}
+                  <span className="ml-1 text-neutral-400 dark:text-neutral-500">({decoded.multiSendInner.length} calls)</span>
+                </span>
+                <div className="min-w-0 flex-1 space-y-2">
+                  {decoded.multiSendInner.map((call, k) => (
+                    <div
+                      key={k}
+                      className="rounded border border-neutral-300 bg-neutral-50 p-2 dark:border-neutral-700 dark:bg-neutral-900"
+                    >
+                      <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs">
+                        <span className="font-semibold text-neutral-700 dark:text-neutral-200">#{k + 1}</span>
+                        <span className="text-neutral-800 dark:text-neutral-100">
+                          {call.decoded?.method ?? '(unknown)'}
+                          <span className="ml-1 text-neutral-400">()</span>
+                        </span>
+                        <span className="text-neutral-400 dark:text-neutral-500">
+                          {call.operation === 1 ? 'DelegateCall' : 'Call'} → {call.to.slice(0, 6)}…{call.to.slice(-4)}
+                        </span>
+                        {call.value !== '0' && (
+                          <span className="text-neutral-400 dark:text-neutral-500">value {call.value}</span>
+                        )}
+                      </div>
+                      {call.decoded ? (
+                        <div className="space-y-1">
+                          {call.decoded.parameters.map((inner, j) => (
+                            <div key={j} className="flex items-start gap-2 text-xs">
+                              <span className="w-28 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
+                                {inner.name}
+                                <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
+                              </span>
+                              <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
+                                {formatParamValue(inner.value, inner.type, call.to, call.decoded!.parameters, assetMetadata)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <code className="block break-all font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
+                          {call.data}
+                        </code>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          }
+
           if (innerParamName && param.name === innerParamName && innerDecoded) {
             return (
               <div key={i} className="flex items-start gap-2 text-xs">
