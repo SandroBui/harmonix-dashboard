@@ -9,13 +9,11 @@ import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hook
 import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
-import { formatTokenAmount } from '@/lib/format'
+import { formatDenomination } from '@/lib/format'
 import type { NavCategoryData } from '@/lib/nav-reader'
 
 type Props = {
   asset: string
-  decimals: number
-  symbol: string
   category: NavCategoryData
   /** True when: Safe has OPERATOR_ROLE AND connected wallet is a Safe owner */
   canPropose: boolean
@@ -23,7 +21,7 @@ type Props = {
   onClose: () => void
 }
 
-export default function SyncNavForm({ asset, decimals, symbol, category, canPropose, isConnected, onClose }: Props) {
+export default function SyncNavForm({ asset, category, canPropose, isConnected, onClose }: Props) {
   const { chainId } = useAccount()
   const [inputValue, setInputValue] = useState('')
   const config = useVaultConfig()
@@ -36,10 +34,12 @@ export default function SyncNavForm({ asset, decimals, symbol, category, canProp
 
   const isWrongChain = isConnected && chainId !== 999
 
+  // Category NAV is stored as WAD-denominated USD on-chain (1e18 scale), matching
+  // FundNavFeed.fundNavValue(). The input is a $-amount, not asset units.
   function parseNavInput(): bigint | null {
     try {
       if (!inputValue.trim()) return null
-      return parseUnits(inputValue.trim(), decimals)
+      return parseUnits(inputValue.trim(), 18)
     } catch {
       return null
     }
@@ -92,21 +92,21 @@ export default function SyncNavForm({ asset, decimals, symbol, category, canProp
       <div className="mb-3 text-xs text-blue-700 dark:text-blue-300">
         Current value:{' '}
         <span className="font-semibold tabular-nums">
-          {formatTokenAmount(category.nav, decimals, 4)} {symbol}
+          {formatDenomination(category.nav, 4)}
         </span>
       </div>
 
       <div className="mb-4 flex items-center gap-2">
+        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">$</span>
         <input
           type="number"
           min="0"
           step="any"
-          placeholder={`New NAV in ${symbol}`}
+          placeholder="New NAV in USD"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           className="flex-1 rounded-md border border-blue-300 bg-white px-3 py-1.5 text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-blue-700 dark:bg-neutral-800 dark:text-white dark:placeholder-neutral-500"
         />
-        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{symbol}</span>
       </div>
 
       {proposeTx.error && (

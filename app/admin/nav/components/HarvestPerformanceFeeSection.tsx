@@ -28,14 +28,16 @@ function formatTimestamp(seconds: string): string {
 
 const WAD = 10n ** 18n
 
+// PPS after minting `sharesToMint` to the fee receiver. Uses the *effective* NAV
+// (claimable & pending excluded) to match computeNav()'s on-chain PPS formula.
 function computePostMintPps(
-  navDenomination: string,
+  effNavDenomination: string,
   effectiveSupply: string,
   sharesToMint: string,
 ): string | null {
   const newEffSupply = BigInt(effectiveSupply) + BigInt(sharesToMint)
   if (newEffSupply === 0n) return null
-  return ((BigInt(navDenomination) * WAD) / newEffSupply).toString()
+  return ((BigInt(effNavDenomination) * WAD) / newEffSupply).toString()
 }
 
 export default function HarvestPerformanceFeeSection({ data, canPropose, isConnected }: Props) {
@@ -160,7 +162,7 @@ export default function HarvestPerformanceFeeSection({ data, canPropose, isConne
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
               {(() => {
                 const newPps = computePostMintPps(
-                  data.liveNavDenomination,
+                  data.liveEffNavDenomination,
                   data.effectiveSupply,
                   data.performanceFeePreview.sharesToMint,
                 )

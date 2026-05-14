@@ -1,9 +1,10 @@
 'use client'
 
-import type { DataDecoded, DecodedParam } from '@/lib/safe/types'
+import type { DataDecoded } from '@/lib/safe/types'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { decodeSubmitInnerData, decodeUpgradeInnerData, resolveSelector } from '@/lib/safe/decoder'
+import { formatDenomination } from '@/lib/format'
 
 type Props = {
   decoded: DataDecoded | null
@@ -83,7 +84,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                               </span>
                               <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                                {formatParamValue(inner.value, inner.type, call.to, call.decoded!.parameters, assetMetadata)}
+                                {formatParamValue(inner.value, inner.name, inner.type, call.to, assetMetadata)}
                               </span>
                             </div>
                           ))}
@@ -119,7 +120,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                         <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                       </span>
                       <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                        {formatParamValue(inner.value, inner.type, to, innerDecoded.parameters, assetMetadata)}
+                        {formatParamValue(inner.value, inner.name, inner.type, to, assetMetadata)}
                       </span>
                     </div>
                   ))}
@@ -135,7 +136,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({param.type})</span>
               </span>
               <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                {formatParamValue(param.value, param.type, to, decoded.parameters, assetMetadata)}
+                {formatParamValue(param.value, param.name, param.type, to, assetMetadata)}
               </span>
             </div>
           )
@@ -145,7 +146,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
   )
 }
 
-function formatParamValue(value: string, type: string, to: string, allParams: DecodedParam[], assetMetadata?: Record<string, AssetMeta>): string {
+function formatParamValue(value: string, paramName: string, type: string, to: string, assetMetadata?: Record<string, AssetMeta>): string {
   if (type === 'bytes4') {
     const fnName = resolveSelector(value)
     if (fnName !== value) return `${value} (${fnName})`
@@ -153,15 +154,18 @@ function formatParamValue(value: string, type: string, to: string, allParams: De
   }
 
   if (type === 'uint256') {
-    // Primary lookup: `to` address is the token contract (e.g. ERC-20 transfer/approve)
-    let meta = assetMetadata?.[to.toLowerCase()]
-
-    // Secondary lookup: for FundNavFeed calls, the NAV amount is denominated in the
-    // sibling `asset` parameter, not in the contract being called (`to`).
-    if (!meta) {
-      const assetAddr = allParams.find((p) => p.name === 'asset')?.value ?? ''
-      meta = assetMetadata?.[assetAddr.toLowerCase()]
+    // FundNavFeed `nav` (syncNavValue) is a USD denomination at 1e18 scale —
+    // NOT a token amount in the sibling `asset`. Format it as a denomination.
+    if (paramName === 'nav') {
+      try {
+        return formatDenomination(value, 6)
+      } catch {
+        return value
+      }
     }
+
+    // `to` address is the token contract (e.g. ERC-20 transfer/approve).
+    const meta = assetMetadata?.[to.toLowerCase()]
 
     if (meta) {
       try {
