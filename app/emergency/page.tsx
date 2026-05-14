@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 const TRACKED_FUNCTIONS = [
   { label: 'deposit', signature: 'deposit(uint256,address)' },
   { label: 'mint', signature: 'mint(uint256,address)' },
-  { label: 'requestRedeem', signature: 'requestRedeem(uint256,address,address,uint256)' },
+  { label: 'requestRedeem', signature: 'requestRedeem(uint256,address,address)' },
 ] as const
 
 export type DisabledFunctionsMap = Record<string, Record<string, boolean>>

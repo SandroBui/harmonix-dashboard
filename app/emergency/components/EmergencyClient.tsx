@@ -17,7 +17,7 @@ const AUTO_REFRESH_MS = 30_000
 const DISABLEABLE_FUNCTIONS = [
   { label: 'deposit', signature: 'deposit(uint256,address)' },
   { label: 'mint', signature: 'mint(uint256,address)' },
-  { label: 'requestRedeem', signature: 'requestRedeem(uint256,address,address,uint256)' },
+  { label: 'requestRedeem', signature: 'requestRedeem(uint256,address,address)' },
 ] as const
 
 // Descriptions of what pausing blocks, per contract type
