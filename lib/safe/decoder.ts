@@ -4,6 +4,7 @@ import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
 import { getApiKit } from './api-kit'
+import { formatDenomination } from '@/lib/format'
 import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
@@ -231,12 +232,10 @@ export function summarizeDecodedData(
 
   // ── FundNavFeed methods ─────────────────────────────────────────────────
   if (method === 'syncNavValue') {
-    const asset = parameters.find((p) => p.name === 'asset')?.value ?? ''
     const desc = parameters.find((p) => p.name === 'description')?.value ?? '?'
     const nav = parameters.find((p) => p.name === 'nav')?.value ?? '0'
-    const meta = assetMetadata[asset.toLowerCase()]
-    const amount = meta ? formatAmount(nav, meta.decimals) + ' ' + meta.symbol : nav
-    return `Sync NAV — "${desc}" → ${amount}`
+    // `nav` is a USD denomination at 1e18 scale — not a token amount in `asset`.
+    return `Sync NAV — "${desc}" → ${formatDenomination(nav, 6)}`
   }
 
   if (method === 'addNavCategory') {

@@ -9,7 +9,7 @@ import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hook
 import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useFundNavFeedAddress } from '@/lib/hooks/use-fund-nav-feed'
-import { formatTokenAmount } from '@/lib/format'
+import { formatDenomination } from '@/lib/format'
 import type { NavCategoryData } from '@/lib/nav-reader'
 import SyncNavForm from './SyncNavForm'
 import AddCategoryForm from './AddCategoryForm'
@@ -23,8 +23,6 @@ export type Roles = {
 
 type Props = {
   asset: string
-  symbol: string
-  decimals: number
   categories: NavCategoryData[]
   roles: Roles
 }
@@ -196,7 +194,7 @@ function CategoryRowActions({
 
 // ── Main table ────────────────────────────────────────────────────────────────
 
-export default function CategoryTable({ asset, symbol, decimals, categories, roles }: Props) {
+export default function CategoryTable({ asset, categories, roles }: Props) {
   const [activeAction, setActiveAction] = useState<ActionState>(null)
 
   const canProposeOperator =
@@ -252,8 +250,7 @@ export default function CategoryTable({ asset, symbol, decimals, categories, rol
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums font-medium text-neutral-900 dark:text-white">
-                      {formatTokenAmount(cat.nav, decimals, 4)}
-                      <span className="ml-1.5 text-xs font-normal text-neutral-400">{symbol}</span>
+                      {formatDenomination(cat.nav, 4)}
                     </td>
                     <td className="px-4 py-3">
                       <CategoryRowActions
@@ -282,8 +279,6 @@ export default function CategoryTable({ asset, symbol, decimals, categories, rol
                         <td colSpan={4} className="px-4 py-3">
                           <SyncNavForm
                             asset={asset}
-                            decimals={decimals}
-                            symbol={symbol}
                             category={cat}
                             canPropose={canProposeOperator}
                             isConnected={roles.isConnected}

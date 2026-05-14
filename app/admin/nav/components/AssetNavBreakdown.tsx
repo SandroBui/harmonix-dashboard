@@ -235,8 +235,6 @@ export default function AssetNavBreakdown({ data, roles }: Props) {
                 <div className="border-t border-neutral-100 px-4 pb-4 dark:border-neutral-800">
                   <CategoryTable
                     asset={assetData.asset}
-                    symbol={assetData.symbol}
-                    decimals={assetData.decimals}
                     categories={assetData.categories}
                     roles={roles}
                   />

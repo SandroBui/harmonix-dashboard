@@ -29,16 +29,17 @@ function formatTimestamp(seconds: string): string {
 const WAD = 10n ** 18n
 
 // PPS after minting `sharesToMint` to the fee receiver. NAV is unchanged by a
-// fee harvest (it's paid in shares, not assets), so new PPS = navDenom * 1e18 /
-// (effectiveSupply + sharesToMint). Returns null if the denominator is zero.
+// fee harvest (it's paid in shares, not assets), so new PPS = effNavDenom * 1e18 /
+// (effectiveSupply + sharesToMint). Uses the *effective* NAV (claimable & pending
+// excluded) to match computeNav()'s on-chain PPS. Returns null if denominator is zero.
 function computePostMintPps(
-  navDenomination: string,
+  effNavDenomination: string,
   effectiveSupply: string,
   sharesToMint: string,
 ): string | null {
   const newEffSupply = BigInt(effectiveSupply) + BigInt(sharesToMint)
   if (newEffSupply === 0n) return null
-  return ((BigInt(navDenomination) * WAD) / newEffSupply).toString()
+  return ((BigInt(effNavDenomination) * WAD) / newEffSupply).toString()
 }
 
 export default function HarvestManagementFeeSection({ data, canPropose, isConnected }: Props) {
@@ -147,7 +148,7 @@ export default function HarvestManagementFeeSection({ data, canPropose, isConnec
             <span className="font-semibold tabular-nums text-neutral-900 dark:text-white">
               {(() => {
                 const newPps = computePostMintPps(
-                  data.liveNavDenomination,
+                  data.liveEffNavDenomination,
                   data.effectiveSupply,
                   data.managementFeePreview.sharesToMint,
                 )

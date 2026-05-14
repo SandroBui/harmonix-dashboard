@@ -49,8 +49,8 @@ export type NavPageData = {
   livePpsValue: string
   liveIsValidPps: boolean
   // Current effective supply (totalSupply - globalRedeemShares, 1e18 scale).
-  // PPS = liveNavDenomination * 1e18 / effectiveSupply, so post-harvest PPS can be
-  // computed locally as navDenomination * 1e18 / (effectiveSupply + sharesToMint).
+  // PPS = liveEffNavDenomination * 1e18 / effectiveSupply, so post-harvest PPS can
+  // be computed locally as liveEffNavDenomination * 1e18 / (effectiveSupply + sharesToMint).
   effectiveSupply: string
   // Stored (last updateNav()) values
   storedPps: string
@@ -257,11 +257,6 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
     : [[], [], [], {} as Record<string, import('./vault-group-config').AssetMeta>, []]
 
   // ── Aggregate claimable / pending — already WAD-denom per v0.6.0 ──────────
-  // offChainNav is still asset-units, so it keeps the ratio conversion below.
-  function assetsToDenomination(assets: bigint, navAsset: bigint, navDenomination: bigint): bigint {
-    if (assets === 0n || navAsset === 0n) return 0n
-    return (assets * navDenomination) / navAsset
-  }
   const totalClaimableNav = vaultOverviews
     .reduce((sum, v) => sum + v.claimableDenom, 0n)
     .toString()
@@ -283,14 +278,11 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
     const rawCategories = ((categoriesPerAsset as unknown) as { isActive: boolean; description: string; nav: bigint }[][])[i] ?? []
 
     const overview = overviewByAsset.get(assetAddr)
-    const navAsset = overview?.navAsset ?? storedNav
-    const navDenom  = overview?.navDenomination ?? storedDenomination
 
-    // Per v0.6.0: claimable/pending are already in WAD denom — no ratio conversion needed.
+    // Per v0.6.0: claimable/pending/offChainNav are already in WAD denom — no ratio conversion needed.
     const claimableDenomination = overview?.claimableDenom ?? 0n
     const pendingDenomination   = overview?.pendingDenom   ?? 0n
-    // offChainNav from FundNavFeed.fundNavValue() is still in asset units, so keep the ratio path.
-    const offChainDenomination  = assetsToDenomination(offChainNav, navAsset, navDenom)
+    const offChainDenomination  = offChainNav
 
     const effectiveRaw = storedDenomination - claimableDenomination - pendingDenomination
     const effectiveDenomination = effectiveRaw > 0n ? effectiveRaw : 0n
