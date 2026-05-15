@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { formatDenomination, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatDenomination, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import type { AssetNavData, NavPageData } from '@/lib/nav-reader'
 import CategoryTable, { type Roles } from './CategoryTable'
@@ -76,7 +76,8 @@ function computeCapStatus(asset: AssetNavData): CapStatus {
   if (cap === 0n) {
     return { severity: 'none', utilizationBps: null, utilizationPct: '—' }
   }
-  const stored = BigInt(asset.storedNav)
+  // Both cap and storedDenomination are denomination-scaled (1e18 USD WAD).
+  const stored = BigInt(asset.storedDenomination)
   const bps = (stored * 10000n) / cap
   let severity: CapSeverity = 'none'
   if (bps >= FULL_BPS) severity = 'critical'
@@ -122,7 +123,7 @@ export default function AssetNavBreakdown({ data, roles }: Props) {
           const capStatus = computeCapStatus(assetData)
           const isCapped = assetData.vaultCap !== '0'
           const capDisplay = isCapped
-            ? `${formatTokenAmount(assetData.vaultCap, assetData.decimals, 2)} ${assetData.symbol}`
+            ? formatDenomination(assetData.vaultCap)
             : 'No limit'
           const capSubLabel = isCapped ? `Stored: ${capStatus.utilizationPct} of cap` : ''
 

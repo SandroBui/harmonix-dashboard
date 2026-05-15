@@ -7,6 +7,7 @@ import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagm
 import { decodeFunctionData, encodeFunctionData, formatUnits, getAddress, parseUnits } from 'viem'
 import { HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useRoleCheck } from '@/lib/safe/hooks'
+import { formatDenomination } from '@/lib/format'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import type { PendingOperation } from '@/lib/timelocks-reader'
 import { getVaultConfigData } from '@/lib/vault-config-reader'
@@ -369,10 +370,13 @@ type VaultCapRowProps = {
   adminHasRole: boolean
 }
 
-function formatCap(cap: string, decimals: number, symbol: string): string {
+// The vault cap is denomination-scaled (1e18 USD WAD), not asset units.
+// 6 fractional digits so a tiny (likely mis-set) cap stays visible instead of
+// rounding to "$0.00".
+function formatCap(cap: string): string {
   if (cap === '0') return 'No limit'
   try {
-    return `${formatUnits(BigInt(cap), decimals)} ${symbol}`
+    return formatDenomination(cap, 6)
   } catch {
     return `${cap} (raw)`
   }
@@ -395,7 +399,8 @@ function VaultCapRow({
     const trimmed = inputValue.trim()
     if (!trimmed) return null
     try {
-      const cap = parseUnits(trimmed, entry.decimals)
+      // Cap is denomination-scaled (1e18 USD WAD), independent of asset decimals.
+      const cap = parseUnits(trimmed, 18)
       return encodeFunctionData({
         abi: VAULT_MANAGER_ADMIN_ABI,
         functionName: 'setVaultCap',
@@ -404,7 +409,7 @@ function VaultCapRow({
     } catch {
       return null
     }
-  }, [inputValue, entry.vault, entry.decimals])
+  }, [inputValue, entry.vault])
 
   function handlePropose() {
     if (!calldata) return
@@ -446,7 +451,18 @@ function VaultCapRow({
     btnClass = 'bg-red-600 text-white hover:bg-red-700'
   }
 
-  const display = formatCap(entry.cap, entry.decimals, entry.symbol)
+  const display = formatCap(entry.cap)
+
+  // Mis-set cap guard: a non-zero cap below the vault's current NAV means
+  // every new deposit reverts with ExceedCap.
+  const navExceedsCap =
+    entry.cap !== '0' && (() => {
+      try {
+        return BigInt(entry.storedDenomination) > BigInt(entry.cap)
+      } catch {
+        return false
+      }
+    })()
 
   return (
     <div className="py-2.5">
@@ -478,12 +494,18 @@ function VaultCapRow({
         )}
       </div>
 
+      {navExceedsCap && (
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+          ⚠ Current NAV ({formatDenomination(entry.storedDenomination)}) exceeds this cap — new deposits will revert with ExceedCap.
+        </p>
+      )}
+
       {open && (
         <div className="mt-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-800">
           <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder={`e.g. 1000000 (in ${entry.symbol}). 0 = no limit`}
+              placeholder="e.g. 1000000 (USD). 0 = no limit"
               value={inputValue}
               onChange={(e) => { setInputValue(e.target.value); proposeTx.reset() }}
               className="min-w-0 flex-1 rounded border border-neutral-300 bg-white px-2.5 py-1.5 text-sm font-mono dark:border-neutral-600 dark:bg-neutral-900 dark:text-white"
@@ -508,7 +530,7 @@ function VaultCapRow({
           </div>
 
           <p className="mt-1.5 text-xs text-neutral-400 dark:text-neutral-500">
-            Deposit cap in {entry.symbol} (decimals: {entry.decimals}). Enter <code className="font-mono">0</code> to remove the cap. Applied immediately — no timelock.
+            Deposit cap in USD (denomination value, 1e18 scale — not {entry.symbol} token units). Enter <code className="font-mono">0</code> to remove the cap. Applied immediately — no timelock.
           </p>
 
           {proposeTx.isSuccess && (
