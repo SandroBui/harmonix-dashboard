@@ -21,9 +21,10 @@ export type AssetNavData = {
   decimals: number
   // AssetVault address (one per registered asset)
   vaultAddress: string
-  // Per-vault deposit cap in asset units. "0" means uncapped.
+  // Per-vault deposit cap, denomination scale (1e18 USD WAD). "0" means uncapped.
   vaultCap: string
-  // Stored per-asset NAV from last updateNav() call (denomination scale, 1e18)
+  // Stored per-asset NAV from last updateNav(): storedNav is in asset units,
+  // storedDenomination is in denomination scale (1e18 USD WAD).
   storedNav: string
   storedDenomination: string
   // Live off-chain NAV total from FundNavFeed (raw token units)
@@ -240,7 +241,7 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
         ),
         // ERC-20 symbol + decimals for each asset
         fetchAssetMetadataForAddresses(assetList),
-        // Per-AssetVault deposit cap (raw asset units; 0 means uncapped)
+        // Per-AssetVault deposit cap (denomination scale, 1e18 USD WAD; 0 means uncapped)
         Promise.all(
           assetList.map((asset) => {
             const vault = vaultByAsset.get(asset.toLowerCase())
