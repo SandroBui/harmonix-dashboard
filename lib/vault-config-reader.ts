@@ -23,7 +23,8 @@ export type VaultCapEntry = {
   asset: string     // underlying asset token address
   symbol: string    // asset ERC-20 symbol
   decimals: number  // asset ERC-20 decimals
-  cap: string       // raw asset units (0 means uncapped)
+  cap: string       // denomination scale, 1e18 USD WAD (0 means uncapped)
+  storedDenomination: string // current vault NAV in denomination (1e18) — for cap sanity checks
 }
 
 export type AssetPriceBoundsEntry = {
@@ -161,18 +162,32 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
       ])
     : [[] as readonly `0x${string}`[], {} as Record<string, import('./vault-group-config').AssetMeta>]
 
-  const resolvedCaps = assetList.length > 0
-    ? await Promise.all(
-        vaultAddresses.map((vault) =>
-          publicClient.readContract({
-            address: haVaultReaderAddress,
-            abi: HA_VAULT_READER_ABI,
-            functionName: 'getVaultCap',
-            args: [vault],
-          }) as Promise<bigint>
+  // The cap is denomination-scaled (1e18 USD WAD), so we also fetch each vault's
+  // current NAV denomination to flag mis-set caps (NAV already over the cap).
+  const [resolvedCaps, navAndDenoms] = assetList.length > 0
+    ? await Promise.all([
+        Promise.all(
+          vaultAddresses.map((vault) =>
+            publicClient.readContract({
+              address: haVaultReaderAddress,
+              abi: HA_VAULT_READER_ABI,
+              functionName: 'getVaultCap',
+              args: [vault],
+            }) as Promise<bigint>
+          ),
         ),
-      )
-    : []
+        Promise.all(
+          assetList.map((asset) =>
+            publicClient.readContract({
+              address: haVaultReaderAddress,
+              abi: HA_VAULT_READER_ABI,
+              functionName: 'getAssetNavAndDenomination',
+              args: [asset],
+            }) as Promise<readonly [bigint, bigint]>
+          ),
+        ),
+      ])
+    : [[] as bigint[], [] as readonly [bigint, bigint][]]
 
   const vaultCaps = assetList.map((asset, i) => {
     const assetAddr = asset.toLowerCase()
@@ -183,6 +198,7 @@ export async function getVaultConfigData(config: VaultGroupConfig): Promise<Vaul
       symbol: meta.symbol,
       decimals: meta.decimals,
       cap: (resolvedCaps[i] ?? 0n).toString(),
+      storedDenomination: (navAndDenoms[i]?.[1] ?? 0n).toString(),
     }
   })
 
