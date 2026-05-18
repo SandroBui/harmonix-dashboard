@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
+import { useFulfillmentStatus } from '@/lib/hooks/use-fulfillment-status'
 import { useRoleCheck } from '@/lib/safe/hooks'
 import type { SafeInfo } from '@/lib/safe/types'
 import FilterBar, { StatusFilter, AssetOption } from './FilterBar'
@@ -21,6 +22,7 @@ type WindowMeta = {
 type Props = {
   withdrawals: Withdrawal[]
   vaultAssetMap: Record<string, string>
+  fulfillmentSeconds: number
   windowMeta: WindowMeta
 }
 
@@ -79,7 +81,141 @@ function CopyButton({ value }: { value: string }) {
   )
 }
 
-export default function WithdrawalsClient({ withdrawals, vaultAssetMap, windowMeta }: Props) {
+type AssetMeta = { symbol?: string; decimals: number } | undefined
+
+function WithdrawalRow({
+  w,
+  assetAddr,
+  meta,
+  selectable,
+  checked,
+  fulfillmentSeconds,
+  onToggle,
+}: {
+  w: Withdrawal
+  assetAddr: string | undefined
+  meta: AssetMeta
+  selectable: boolean
+  checked: boolean
+  fulfillmentSeconds: number
+  onToggle: () => void
+}) {
+  const shares = BigInt(w.shares)
+  const orig = BigInt(w.originalShares)
+  const isDone = w.isFulfilled || shares === 0n
+  const { label: timeLeft, overdue } = useFulfillmentStatus(
+    w.requestedAt,
+    fulfillmentSeconds,
+    isDone,
+  )
+
+  return (
+    <tr
+      onClick={onToggle}
+      className={[
+        'transition-colors',
+        selectable ? 'cursor-pointer' : 'cursor-default',
+        checked
+          ? 'bg-blue-50 dark:bg-blue-950/30'
+          : overdue && selectable
+            ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-950/30'
+            : selectable
+              // Tier 1 — selectable: full brightness
+              ? 'bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/50'
+              : shares > 0n
+                // Tier 2 — shares > 0, not selectable in this mode: medium dim
+                ? 'bg-white opacity-60 dark:bg-neutral-900'
+                // Tier 3 — shares = 0: most faded
+                : 'bg-white opacity-30 dark:bg-neutral-900',
+      ].join(' ')}
+    >
+      {/* Checkbox */}
+      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={!selectable}
+          onChange={onToggle}
+          className="h-4 w-4 rounded accent-neutral-900 disabled:cursor-not-allowed dark:accent-white"
+        />
+      </td>
+      <td className="px-4 py-3 font-mono text-neutral-500 dark:text-neutral-400">
+        #{w.id}
+      </td>
+      <td className="px-4 py-3 font-medium text-neutral-900 dark:text-white">
+        <span title={assetAddr ?? w.vault}>
+          {meta?.symbol ?? truncateAddress(assetAddr ?? w.vault)}
+        </span>
+        <CopyButton value={assetAddr ?? w.vault} />
+      </td>
+      <td className="px-4 py-3 font-mono text-neutral-500 dark:text-neutral-400">
+        <span title={w.controller}>{truncateAddress(w.controller)}</span>
+        <CopyButton value={w.controller} />
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
+        {formatUnits(w.shares, 18)}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
+        {w.originalShares === '0' ? '—' : formatUnits(w.originalShares, 18)}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
+        {meta ? formatUnits(w.assets, meta.decimals) : w.assets}
+        {meta && (
+          <span className="ml-1 text-neutral-400 dark:text-neutral-500">
+            {meta.symbol}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
+        {w.originalAssets === '0'
+          ? '—'
+          : meta
+            ? formatUnits(w.originalAssets, meta.decimals)
+            : w.originalAssets}
+        {w.originalAssets !== '0' && meta && (
+          <span className="ml-1 text-neutral-400 dark:text-neutral-500">
+            {meta.symbol}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-neutral-600 dark:text-neutral-300">
+        {formatTimestamp(w.requestedAt)}
+      </td>
+      <td className="px-4 py-3">
+        {orig > 0n && shares === 0n ? (
+          <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+            Completed
+          </span>
+        ) : orig > 0n && shares > 0n && shares < orig ? (
+          <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+            Partial Claimed
+          </span>
+        ) : w.isFulfilled ? (
+          <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+            Fulfilled
+          </span>
+        ) : (
+          <span className="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+            Pending
+            {timeLeft && (
+              <span
+                className={
+                  overdue
+                    ? 'ml-1.5 font-semibold text-red-600 dark:text-red-400'
+                    : 'ml-1.5 text-yellow-700/70 dark:text-yellow-400/70'
+                }
+              >
+                · {timeLeft}
+              </span>
+            )}
+          </span>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillmentSeconds, windowMeta }: Props) {
   const router = useRouter()
   const { data: assetMetadata } = useAssetMetadata()
 
@@ -333,111 +469,18 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, windowMe
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {filtered.map((w) => {
                 const assetAddr = vaultAssetMap[w.vault]
-                const meta = assetAddr ? assetMetadata?.[assetAddr] : undefined
-                const selectable = isSelectable(w)
-                const checked = selectedIds.has(w.id)
-
+                const rowMeta = assetAddr ? assetMetadata?.[assetAddr] : undefined
                 return (
-                  <tr
+                  <WithdrawalRow
                     key={w.id}
-                    onClick={() => toggleRow(w)}
-                    className={[
-                      'transition-colors',
-                      selectable ? 'cursor-pointer' : 'cursor-default',
-                      checked
-                        ? 'bg-blue-50 dark:bg-blue-950/30'
-                        : selectable
-                          // Tier 1 — selectable: full brightness
-                          ? 'bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/50'
-                          : BigInt(w.shares) > 0n
-                            // Tier 2 — shares > 0, not selectable in this mode: medium dim
-                            ? 'bg-white opacity-60 dark:bg-neutral-900'
-                            // Tier 3 — shares = 0: most faded
-                            : 'bg-white opacity-30 dark:bg-neutral-900',
-                    ].join(' ')}
-                  >
-                    {/* Checkbox */}
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={!selectable}
-                        onChange={() => toggleRow(w)}
-                        className="h-4 w-4 rounded accent-neutral-900 disabled:cursor-not-allowed dark:accent-white"
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-neutral-500 dark:text-neutral-400">
-                      #{w.id}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-neutral-900 dark:text-white">
-                      <span title={assetAddr ?? w.vault}>
-                        {meta?.symbol ?? truncateAddress(assetAddr ?? w.vault)}
-                      </span>
-                      <CopyButton value={assetAddr ?? w.vault} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-neutral-500 dark:text-neutral-400">
-                      <span title={w.controller}>{truncateAddress(w.controller)}</span>
-                      <CopyButton value={w.controller} />
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
-                      {formatUnits(w.shares, 18)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
-                      {w.originalShares === '0' ? '—' : formatUnits(w.originalShares, 18)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-neutral-900 dark:text-white">
-                      {meta ? formatUnits(w.assets, meta.decimals) : w.assets}
-                      {meta && (
-                        <span className="ml-1 text-neutral-400 dark:text-neutral-500">
-                          {meta.symbol}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-neutral-500 dark:text-neutral-400">
-                      {w.originalAssets === '0'
-                        ? '—'
-                        : meta
-                          ? formatUnits(w.originalAssets, meta.decimals)
-                          : w.originalAssets}
-                      {w.originalAssets !== '0' && meta && (
-                        <span className="ml-1 text-neutral-400 dark:text-neutral-500">
-                          {meta.symbol}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-neutral-600 dark:text-neutral-300">
-                      {formatTimestamp(w.requestedAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {(() => {
-                        const shares = BigInt(w.shares)
-                        const orig = BigInt(w.originalShares)
-                        if (orig > 0n && shares === 0n) {
-                          return (
-                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                              Completed
-                            </span>
-                          )
-                        }
-                        if (orig > 0n && shares > 0n && shares < orig) {
-                          return (
-                            <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                              Partial Claimed
-                            </span>
-                          )
-                        }
-                        return w.isFulfilled ? (
-                          <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                            Fulfilled
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
-                            Pending
-                          </span>
-                        )
-                      })()}
-                    </td>
-                  </tr>
+                    w={w}
+                    assetAddr={assetAddr}
+                    meta={rowMeta}
+                    selectable={isSelectable(w)}
+                    checked={selectedIds.has(w.id)}
+                    fulfillmentSeconds={fulfillmentSeconds}
+                    onToggle={() => toggleRow(w)}
+                  />
                 )
               })}
             </tbody>
