@@ -17,6 +17,8 @@ export default async function WithdrawalsPage({
   const sp = await searchParams
   const config = resolveVaultFromParams(sp)
 
+  const fulfillmentSeconds = Number(process.env.WITHDRAWAL_FULFILLMENT_SECONDS) || 3 * 86400
+
   const days = sp.days === 'all' ? 0 : Number(sp.days ?? 7)
   const nowSec = Math.floor(Date.now() / 1000)
   const windowOpts =
@@ -66,6 +68,7 @@ export default async function WithdrawalsPage({
       <WithdrawalsClient
         withdrawals={windowResult.rows}
         vaultAssetMap={vaultAssetMap}
+        fulfillmentSeconds={fulfillmentSeconds}
         windowMeta={{
           totalQueueLength: windowResult.totalQueueLength,
           fromId: windowResult.fromId,
