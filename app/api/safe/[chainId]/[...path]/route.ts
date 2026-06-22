@@ -16,16 +16,12 @@ function upstreamBase(chainId: string): string | null {
  * Transparent proxy to the Safe Transaction Service.
  *
  * The browser SafeApiKit is configured with txServiceUrl=`/api/safe/<chainId>`
- * and NO apiKey, so the JWT never enters the client bundle. This route injects
- * the server-only `SAFE_API_KEY` as a Bearer token and forwards the request.
- *
- * Already gated by the Google-auth middleware in proxy.ts when GOOGLE_AUTH=true.
+ * and NO apiKey, so credentials never enter the client bundle. When
+ * `SAFE_API_KEY` is set it is forwarded as Bearer auth; HyperEVM's public
+ * tx-service also works without a key.
  */
 async function proxy(req: NextRequest): Promise<Response> {
   const apiKey = process.env.SAFE_API_KEY
-  if (!apiKey) {
-    return Response.json({ error: 'SAFE_API_KEY is not configured' }, { status: 500 })
-  }
 
   // Path shape: /api/safe/<chainId>/<remainder...>
   const chainId = req.nextUrl.pathname.split('/')[3] ?? ''
@@ -49,13 +45,18 @@ async function proxy(req: NextRequest): Promise<Response> {
   const method = req.method.toUpperCase()
   const hasBody = method !== 'GET' && method !== 'HEAD'
 
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  }
+  // When set, forward auth (production). HyperEVM tx-service also works without a key.
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+
   const upstream = await fetch(`${base}${path}${req.nextUrl.search}`, {
     method,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: hasBody ? await req.text() : undefined,
     redirect: 'manual',
   })

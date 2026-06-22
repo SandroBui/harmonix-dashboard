@@ -30,6 +30,14 @@ function getFulfillAmount(tx: PendingSafeTx): bigint | null {
   }
 }
 
+function formatExecuteError(message: string | undefined): string {
+  if (!message) return 'Execution failed'
+  if (message.includes('GS026')) {
+    return 'GS026: execute blocked — another pending tx must be executed or cancelled first (wrong nonce order).'
+  }
+  return message
+}
+
 export default function SafeTxActions({ tx, safeInfo, safeAddress }: Props) {
   const { address, isConnected, chainId } = useAccount()
   const [showExecuteConfirm, setShowExecuteConfirm] = useState(false)
@@ -87,8 +95,15 @@ export default function SafeTxActions({ tx, safeInfo, safeAddress }: Props) {
   )
   const needsExecuteConfirm = isFulfillRedeem && (isInsufficientFulfill || isHighValueFulfill)
 
+  const onChainNonce = safeInfo !== undefined ? Number(safeInfo.nonce) : undefined
+  const txNonce = Number(tx.nonce)
+  const isStaleNonce = onChainNonce !== undefined && txNonce < onChainNonce
+  const isNonceBlocked = onChainNonce !== undefined && txNonce > onChainNonce
+  const canExecute =
+    tx.isExecutable && !isInsufficientFulfill && !isStaleNonce && !isNonceBlocked
+
   function handleExecuteClick() {
-    if (isInsufficientFulfill) return
+    if (isInsufficientFulfill || isStaleNonce || isNonceBlocked) return
     if (needsExecuteConfirm) {
       setShowExecuteConfirm(true)
       return
@@ -123,11 +138,31 @@ export default function SafeTxActions({ tx, safeInfo, safeAddress }: Props) {
         {tx.isExecutable && (
           <button
             onClick={handleExecuteClick}
-            disabled={isExecuteBusy || isInsufficientFulfill}
+            disabled={isExecuteBusy || !canExecute}
             className="rounded-md bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isInsufficientFulfill ? 'Blocked: FundVault insufficient' : isExecuteBusy ? 'Executing…' : 'Execute'}
+            {isNonceBlocked
+              ? `Execute #${onChainNonce} first`
+              : isStaleNonce
+                ? 'Stale nonce'
+                : isInsufficientFulfill
+                  ? 'Blocked: FundVault insufficient'
+                  : isExecuteBusy
+                    ? 'Executing…'
+                    : 'Execute'}
           </button>
+        )}
+
+        {isNonceBlocked && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            On-chain nonce is {onChainNonce}. Execute or cancel tx #{onChainNonce} before this one.
+          </span>
+        )}
+
+        {isStaleNonce && (
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            Nonce {txNonce} already passed (on-chain nonce is {onChainNonce}).
+          </span>
         )}
 
         {!isThisARejection && (
@@ -155,8 +190,11 @@ export default function SafeTxActions({ tx, safeInfo, safeAddress }: Props) {
           </span>
         )}
         {executeTx.isError && executeTx.variables?.safeTxHash === tx.safeTxHash && (
-          <span className="max-w-xs truncate text-xs text-red-600 dark:text-red-400 cursor-help" title={executeTx.error?.message}>
-            {executeTx.error?.message}
+          <span
+            className="max-w-md truncate text-xs text-red-600 dark:text-red-400 cursor-help"
+            title={formatExecuteError(executeTx.error?.message)}
+          >
+            {formatExecuteError(executeTx.error?.message)}
           </span>
         )}
         {cancelTx.isError && cancelTx.variables?.nonce === Number(tx.nonce) && (

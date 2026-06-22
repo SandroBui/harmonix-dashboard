@@ -7,6 +7,7 @@ import { VAULT_MANAGER_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hooks'
 import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
+import { getNavProposeTarget } from '@/lib/nav-contract-targets'
 import { formatDenomination, formatTokenAmount, truncateAddress } from '@/lib/format'
 import type { NavPageData } from '@/lib/nav-reader'
 
@@ -45,7 +46,7 @@ export default function HarvestPerformanceFeeSection({ data, canPropose, isConne
   const config = useVaultConfig()
   const { data: resolved } = useResolvedRoleSafes()
   const operatorSafeAddress = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
-  const vaultManagerAddress = getAddress(data.vaultManagerAddress) as `0x${string}`
+  const proposeTarget = (getNavProposeTarget(config) ?? getAddress(data.vaultManagerAddress)) as `0x${string}`
 
   const proposeTx = useProposeSafeTransaction(operatorSafeAddress)
 
@@ -62,7 +63,7 @@ export default function HarvestPerformanceFeeSection({ data, canPropose, isConne
       abi: VAULT_MANAGER_ABI,
       functionName: 'harvestPerformanceFee',
     })
-    proposeTx.mutate({ to: vaultManagerAddress, data: calldata })
+    proposeTx.mutate({ to: proposeTarget, data: calldata })
   }
 
   // ── Button state ──────────────────────────────────────────────────────────

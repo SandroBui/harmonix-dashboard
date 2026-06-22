@@ -1,16 +1,30 @@
 import { decodeFunctionData, toFunctionSelector, getAddress } from 'viem'
 import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI, HA_TIMELOCK_CONTROLLER_ABI } from '@/lib/abis'
+import { BALANCE_CONTRACT_ABI, FUND_CONTRACT_ABI, HA_TIME_LOCK_ABI, PERP_NAV_CONTRACT_ABI } from '@/lib/abis'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
+import { V2_ENCODED_ROLE_HASHES, V2_ENCODED_ROLE_LABELS } from '@/lib/v2-role-hashes'
 import { getApiKit } from './api-kit'
 import { formatDenomination } from '@/lib/format'
 import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
 const ROLE_HASH_TO_LABEL: Record<string, string> = Object.fromEntries(
-  Object.entries(ROLE_HASHES).map(([key, hash]) => [hash.toLowerCase(), ROLE_LABELS[key as keyof typeof ROLE_LABELS]])
+  Object.entries(ROLE_HASHES).map(([key, hash]) => [hash.toLowerCase(), ROLE_LABELS[key as keyof typeof ROLE_LABELS]]),
 )
+
+const V2_ROLE_HASH_TO_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(V2_ENCODED_ROLE_HASHES).map(([key, hash]) => [
+    hash.toLowerCase(),
+    V2_ENCODED_ROLE_LABELS[key as keyof typeof V2_ENCODED_ROLE_LABELS],
+  ]),
+)
+
+function roleHashToLabel(roleHash: string): string {
+  const lower = roleHash.toLowerCase()
+  return ROLE_HASH_TO_LABEL[lower] ?? V2_ROLE_HASH_TO_LABEL[lower] ?? truncate(roleHash)
+}
 
 // Map known bytes4 selectors to human-readable function names (VaultAsset)
 const KNOWN_SELECTORS: Record<string, string> = {}
@@ -87,6 +101,10 @@ function decodeLocally(data: string): DataDecoded | null {
     VAULT_MANAGER_ADMIN_ABI,
     ACCESS_MANAGER_ABI,
     HA_TIMELOCK_CONTROLLER_ABI,
+    BALANCE_CONTRACT_ABI,
+    FUND_CONTRACT_ABI,
+    HA_TIME_LOCK_ABI,
+    PERP_NAV_CONTRACT_ABI,
     ERC20_ABI,
   ] as const
 
@@ -216,7 +234,7 @@ export function summarizeDecodedData(
 
   if (method === 'transfer') {
     const recipient = parameters.find((p) => p.name === 'to')
-    const amount = parameters.find((p) => p.name === 'amount')
+    const amount = parameters.find((p) => p.name === 'amount' || p.name === 'value')
     const assetMeta = assetMetadata[to.toLowerCase()]
     const formatted = assetMeta && amount
       ? formatAmount(amount.value, assetMeta.decimals) + ' ' + assetMeta.symbol
@@ -228,6 +246,30 @@ export function summarizeDecodedData(
     const spender = parameters.find((p) => p.name === 'spender')
     const assetMeta = assetMetadata[to.toLowerCase()]
     return `Approve ${assetMeta?.symbol ?? truncate(to)} for ${truncate(spender?.value ?? '')}`
+  }
+
+  if (method === 'executeAction') {
+    const target =
+      parameters.find((p) => p.name === '_target' || p.name === 'target')?.value ?? ''
+    const innerBytes =
+      parameters.find((p) => p.name === '_data' || p.name === 'data')?.value ?? ''
+    const inner = decodeLocally(innerBytes)
+    if (inner) {
+      const innerSummary = summarizeDecodedData(inner, target, '0', vaultAssetMap, assetMetadata)
+      return `executeAction → ${innerSummary}`
+    }
+    return `executeAction on ${truncate(target)}`
+  }
+
+  if (method === 'acquireWithdrawalFunds') {
+    const users = parameters.find((p) => p.name === '_users' || p.name === 'users')
+    let count: number | string = '?'
+    try {
+      count = (JSON.parse(users?.value ?? '[]') as string[]).length
+    } catch {
+      /* not a JSON array */
+    }
+    return `Acquire withdrawal funds for ${count} user(s)`
   }
 
   // ── FundNavFeed methods ─────────────────────────────────────────────────
@@ -359,6 +401,13 @@ export function summarizeDecodedData(
     return `Unpause contract ${truncate(contract)}`
   }
 
+  if (method === 'setPaused') {
+    const paused = parameters.find((p) => p.name === '_paused')?.value
+    if (paused === 'true') return 'Pause contract (setPaused true)'
+    if (paused === 'false') return 'Unpause contract (setPaused false)'
+    return 'Set pause state'
+  }
+
   if (method === 'disableFunction') {
     const contract = parameters.find((p) => p.name === 'haContract')?.value ?? ''
     const selector = parameters.find((p) => p.name === 'selector')?.value ?? ''
@@ -393,27 +442,27 @@ export function summarizeDecodedData(
   if (method === 'grantRole') {
     const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
     const account = parameters.find((p) => p.name === 'account')?.value ?? ''
-    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    const roleLabel = roleHashToLabel(roleHash)
     return `Grant or execute pending ${roleLabel} for ${truncate(account)}`
   }
 
   if (method === 'revokeRole') {
     const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
     const account = parameters.find((p) => p.name === 'account')?.value ?? ''
-    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    const roleLabel = roleHashToLabel(roleHash)
     return `Revoke ${roleLabel} role from ${truncate(account)}`
   }
 
   if (method === 'setRoleTimelock') {
     const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
     const delay = Number(parameters.find((p) => p.name === 'delay')?.value ?? '0')
-    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    const roleLabel = roleHashToLabel(roleHash)
     return `Set ${roleLabel} timelock to ${formatDuration(delay)}`
   }
 
   if (method === 'cancelPendingGrant') {
     const roleHash = parameters.find((p) => p.name === 'role')?.value ?? ''
-    const roleLabel = ROLE_HASH_TO_LABEL[roleHash.toLowerCase()] ?? truncate(roleHash)
+    const roleLabel = roleHashToLabel(roleHash)
     return `Cancel pending ${roleLabel} grant`
   }
 
@@ -442,6 +491,27 @@ const UPGRADE_INNER_ABIS = [
       name: 'upgradeTo',
       stateMutability: 'nonpayable',
       inputs: [{ name: 'newImplementation', type: 'address' }],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'upgrade',
+      stateMutability: 'nonpayable',
+      inputs: [
+        { name: 'proxy', type: 'address' },
+        { name: 'implementation', type: 'address' },
+      ],
+      outputs: [],
+    },
+    {
+      type: 'function',
+      name: 'upgradeAndCall',
+      stateMutability: 'payable',
+      inputs: [
+        { name: 'proxy', type: 'address' },
+        { name: 'implementation', type: 'address' },
+        { name: 'data', type: 'bytes' },
+      ],
       outputs: [],
     },
   ],

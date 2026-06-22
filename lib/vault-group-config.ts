@@ -33,4 +33,16 @@ export type VaultGroupConfig = {
   assetMetadata?: Record<string, AssetMeta>
   /** Safe multisig addresses for this vault group */
   safe: SafeAddresses
+  /** Vault version */
+  version: number
+  /** v2: fund contract for NAV reads and updateNav propose */
+  fundContractAddress?: `0x${string}`
+  /** v2: underlying asset address for NAV reads */
+  underlyingAssetAddress?: `0x${string}`
+  /** v2: balance contract for executeAction (token approve, etc.) */
+  balanceContractAddress?: `0x${string}`
+  /** v2: perp NAV contract for role management */
+  perpNavContractAddress?: `0x${string}`
+  /** v2: OpenZeppelin TimelockController for upgrades */
+  timelockControllerAddress?: `0x${string}`
 }

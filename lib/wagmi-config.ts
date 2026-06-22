@@ -7,7 +7,7 @@ export const hyperEvmMainnet = defineChain({
   name: 'HyperEVM',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://rpc.hyperliquid.xyz/evm'] },
+    default: { http: ['https://hyperliquid.rpc.blxrbdn.com'] },
   },
 })
 

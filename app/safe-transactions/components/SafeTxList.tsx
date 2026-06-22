@@ -7,7 +7,7 @@ import type { SafeInfo } from '@/lib/safe/types'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { formatTokenAmount } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
-import type { RoleTaggedTx } from './SafeTxClient'
+import type { RoleTaggedTx } from '@/lib/safe/types'
 import SafeTxDetail from './SafeTxDetail'
 
 type Props = {

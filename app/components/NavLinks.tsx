@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVaultConfig } from '@/lib/vault-context'
 
 type NavItem = { href: string; label: string; danger?: boolean }
 type NavGroup = { label: string; items: NavItem[]; danger?: boolean }
@@ -41,9 +42,27 @@ function isGroup(entry: NavEntry): entry is NavGroup {
   return (entry as NavGroup).items !== undefined
 }
 
+function filterNavForVault(entries: NavEntry[], vaultVersion: number): NavEntry[] {
+  return entries
+    .map((entry): NavEntry | null => {
+      if (!isGroup(entry)) return entry
+      if (entry.label === 'Security' && vaultVersion === 2) {
+        const items = entry.items.filter((item) => item.href !== '/timelocks')
+        return items.length > 0 ? { ...entry, items } : null
+      }
+      return entry
+    })
+    .filter((entry): entry is NavEntry => entry !== null)
+}
+
 export default function NavLinks() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const vaultConfig = useVaultConfig()
+  const nav = useMemo(
+    () => filterNavForVault(NAV, vaultConfig.version),
+    [vaultConfig.version],
+  )
   const vaultParam = searchParams.get('vault')
   const [openGroup, setOpenGroup] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -82,7 +101,7 @@ export default function NavLinks() {
 
   return (
     <div ref={rootRef} className="flex items-center gap-6">
-      {NAV.map((entry) => {
+      {nav.map((entry) => {
         if (!isGroup(entry)) {
           const active = isItemActive(entry.href)
           return (

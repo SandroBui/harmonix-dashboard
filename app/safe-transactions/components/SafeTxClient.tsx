@@ -4,14 +4,8 @@ import { usePendingSafeTransactions, useSafeInfo, useResolvedRoleSafes } from '@
 import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import type { RoleType } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
-import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
+import type { PendingSafeTx, SafeInfo, RoleTaggedTx } from '@/lib/safe/types'
 import SafeTxList from './SafeTxList'
-
-export type RoleTaggedTx = PendingSafeTx & {
-  roles: RoleType[]
-  safeAddress: `0x${string}`
-  safeInfo: SafeInfo | undefined
-}
 
 /** Maps a decoded function name to the role required to execute it. */
 function inferRoleFromMethod(method: string | undefined): RoleType | null {

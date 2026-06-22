@@ -44,6 +44,14 @@ export function formatDenomination(value: string, maxFrac = 2): string {
 /**
  * Truncate an Ethereum address to the form 0x1234…5678.
  */
+/**
+ * v2 vault fee rates from getVaultSetting: whole-number percent (1 = 1%, 10 = 10%).
+ */
+export function formatV2FeeRatePercent(value: string): string {
+  if (!value || value === '0') return '0%'
+  return `${value}%`
+}
+
 export function truncateAddress(addr: string): string {
   if (!addr || addr.length < 10) return addr
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`

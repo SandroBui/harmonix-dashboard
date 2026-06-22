@@ -1,4 +1,5 @@
 import type { SafeMultisigConfirmationResponse } from '@safe-global/types-kit'
+import type { RoleType } from './roles'
 
 /** A pending Safe multisig transaction, enriched with decoded data */
 export type PendingSafeTx = {
@@ -65,4 +66,10 @@ export type SafeInfo = {
   owners: string[]
   threshold: number
   nonce: string | number
+}
+
+export type RoleTaggedTx = PendingSafeTx & {
+  roles: RoleType[]
+  safeAddress: `0x${string}`
+  safeInfo: SafeInfo | undefined
 }

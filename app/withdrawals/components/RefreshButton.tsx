@@ -3,11 +3,23 @@
 import { useRouter } from 'next/navigation'
 import { useTransition, useEffect, useState } from 'react'
 
-export default function RefreshButton() {
+type Props = {
+  onRefresh?: () => void | Promise<void>
+}
+
+export default function RefreshButton({ onRefresh }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [lastRefreshed, setLastRefreshed] = useState<number>(Date.now())
   const [secondsAgo, setSecondsAgo] = useState(0)
+
+  const runRefresh = () => {
+    if (onRefresh) {
+      return Promise.resolve(onRefresh())
+    }
+    router.refresh()
+    return Promise.resolve()
+  }
 
   // Tick the "X ago" counter every second
   useEffect(() => {
@@ -20,14 +32,18 @@ export default function RefreshButton() {
   // Auto-refresh every 60 seconds
   useEffect(() => {
     const id = setInterval(() => {
-      startTransition(() => router.refresh())
+      startTransition(() => {
+        void runRefresh()
+      })
       setLastRefreshed(Date.now())
     }, 60_000)
     return () => clearInterval(id)
-  }, [router])
+  }, [router, onRefresh]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleClick() {
-    startTransition(() => router.refresh())
+    startTransition(() => {
+      void runRefresh()
+    })
     setLastRefreshed(Date.now())
   }
 

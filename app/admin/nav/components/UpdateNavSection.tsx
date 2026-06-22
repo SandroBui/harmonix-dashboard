@@ -3,12 +3,14 @@
 import Link from 'next/link'
 import { useAccount } from 'wagmi'
 import { encodeFunctionData, getAddress } from 'viem'
-import { VAULT_MANAGER_ABI } from '@/lib/abis'
+import { VAULT_MANAGER_ABI, FUND_CONTRACT_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useResolvedRoleSafes } from '@/lib/safe/hooks'
 import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
 import { useVaultConfig } from '@/lib/vault-context'
+import { getNavProposeTarget } from '@/lib/nav-contract-targets'
 import { formatTokenAmount } from '@/lib/format'
 import type { NavPageData } from '@/lib/nav-reader'
+import PreviewUpdateNavFields from './PreviewUpdateNavFields'
 
 type Props = {
   data: NavPageData
@@ -22,7 +24,8 @@ export default function UpdateNavSection({ data, canPropose, isConnected }: Prop
   const config = useVaultConfig()
   const { data: resolved } = useResolvedRoleSafes()
   const operatorSafeAddress = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
-  const vaultManagerAddress = getAddress(data.vaultManagerAddress) as `0x${string}`
+  const isV2Nav = config.version === 2
+  const proposeTarget = (getNavProposeTarget(config) ?? getAddress(data.vaultManagerAddress)) as `0x${string}`
 
   const proposeTx = useProposeSafeTransaction(operatorSafeAddress)
 
@@ -31,10 +34,10 @@ export default function UpdateNavSection({ data, canPropose, isConnected }: Prop
   function handleProposeSafe() {
     proposeTx.reset()
     const calldata = encodeFunctionData({
-      abi: VAULT_MANAGER_ABI,
+      abi: isV2Nav ? FUND_CONTRACT_ABI : VAULT_MANAGER_ABI,
       functionName: 'updateNav',
     })
-    proposeTx.mutate({ to: vaultManagerAddress, data: calldata })
+    proposeTx.mutate({ to: proposeTarget, data: calldata })
   }
 
   // ── Button state ──────────────────────────────────────────────────────────
@@ -73,27 +76,31 @@ export default function UpdateNavSection({ data, canPropose, isConnected }: Prop
       <div className="mb-4 flex items-center gap-2">
         <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">Update NAV</h2>
         <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          VaultManager.updateNav()
+          {isV2Nav ? 'FundContract.updateNav()' : 'VaultManager.updateNav()'}
         </span>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+      <div className={`mb-4 grid grid-cols-1 gap-3 text-sm ${isV2Nav ? '' : 'sm:grid-cols-2'}`}>
         <div>
           <p className="text-neutral-500 dark:text-neutral-400">Stored PPS</p>
           <p className="mt-0.5 font-semibold tabular-nums text-neutral-900 dark:text-white">
             {formatTokenAmount(data.storedPps, 18, 6)}
           </p>
         </div>
-        <div>
-          <p className="text-neutral-500 dark:text-neutral-400">Live (computed) PPS</p>
-          <p className="mt-0.5 font-semibold tabular-nums text-neutral-900 dark:text-white">
-            {formatTokenAmount(data.livePpsValue, 18, 6)}
-            {!data.liveIsValidPps && (
-              <span className="ml-2 text-xs font-normal text-yellow-600 dark:text-yellow-400">⚠ invalid</span>
-            )}
-          </p>
-        </div>
+        {!isV2Nav && (
+          <div>
+            <p className="text-neutral-500 dark:text-neutral-400">Live (computed) PPS</p>
+            <p className="mt-0.5 font-semibold tabular-nums text-neutral-900 dark:text-white">
+              {formatTokenAmount(data.livePpsValue, 18, 6)}
+              {!data.liveIsValidPps && (
+                <span className="ml-2 text-xs font-normal text-yellow-600 dark:text-yellow-400">⚠ invalid</span>
+              )}
+            </p>
+          </div>
+        )}
       </div>
+
+      {isV2Nav && <PreviewUpdateNavFields />}
 
       <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
         Calling{' '}

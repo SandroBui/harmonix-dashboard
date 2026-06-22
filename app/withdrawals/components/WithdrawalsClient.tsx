@@ -365,7 +365,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
     // pb-20 leaves room for the sticky FulfillPanel when rows are selected
     <div className={`space-y-4 ${selectedIds.size > 0 ? 'pb-20' : ''}`}>
       <div className="flex items-center gap-1">
-        {[7, 30, 90].map((d) => (
+        {[7, 15, 30, 90].map((d) => (
           <button
             key={d}
             onClick={() => setDays(d)}

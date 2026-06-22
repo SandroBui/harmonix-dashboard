@@ -9,11 +9,53 @@ import { DYNAMIC_SAFE_ROLES, getDefaultSafeAddress, getResolvedSafeAddressForRol
 import type { RoleType, ResolvedRoleSafes } from './roles'
 import { initProtocolKit } from './protocol-kit'
 import { decodeTransactionData, summarizeDecodedData } from './decoder'
+import { getV2SafeEntries, inferV2RoleFromMethod } from './v2-safes'
+import type { PendingSafeTx, SafeInfo, FulfillPrecheck, RoleTaggedTx } from './types'
 import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI, VAULT_ASSET_ABI } from '@/lib/contracts'
 import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import type { PendingSafeTx, SafeInfo, FulfillPrecheck } from './types'
+
+const SAFE_ON_CHAIN_ABI = [
+  {
+    type: 'function',
+    name: 'getThreshold',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getOwners',
+    inputs: [],
+    outputs: [{ type: 'address[]' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'nonce',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
+
+async function resolveNextSafeNonce(
+  apiKit: ReturnType<typeof getApiKit>,
+  safeAddress: `0x${string}`,
+): Promise<number | undefined> {
+  try {
+    const pending = await apiKit.getPendingTransactions(safeAddress)
+    const pendingNonces = (pending.results as SafeMultisigTransactionResponse[]).map((tx) =>
+      Number(tx.nonce),
+    )
+    // Same logic as before: queue after highest pending nonce, or SDK on-chain nonce when empty.
+    return pendingNonces.length > 0 ? Math.max(...pendingNonces) + 1 : undefined
+  } catch {
+    // Indexer unreachable — SDK will use the on-chain nonce when undefined.
+    return undefined
+  }
+}
 
 const ERC20_ABI = [
   {
@@ -76,23 +118,7 @@ async function detectAddressType(address: `0x${string}`): Promise<'EOA' | 'Safe'
   const bytecode = await publicClient.getBytecode({ address })
   if (!bytecode || bytecode === '0x') return 'EOA'
 
-  const SAFE_ABI = [
-    {
-      type: 'function',
-      name: 'getThreshold',
-      inputs: [],
-      outputs: [{ type: 'uint256' }],
-      stateMutability: 'view',
-    },
-    {
-      type: 'function',
-      name: 'getOwners',
-      inputs: [],
-      outputs: [{ type: 'address[]' }],
-      stateMutability: 'view',
-    },
-  ] as const
-
+  const SAFE_ABI = SAFE_ON_CHAIN_ABI
   try {
     await Promise.all([
       publicClient.readContract({ address, abi: SAFE_ABI, functionName: 'getThreshold' }),
@@ -172,20 +198,51 @@ export function useResolvedRoleSafes() {
 }
 
 // ─── Fetch Safe Info ──────────────────────────────────────────────────────────
+//
+// Owners/threshold/nonce are read on-chain (authoritative for isSafeOwner checks).
+// Falls back to the Safe Transaction Service if the contract read fails — keeps
+// v3/v2 compatible with non-standard deployments. Pending txs still use the API.
 
 export function useSafeInfo(safeAddress?: `0x${string}`) {
   const config = useVaultConfig()
   const addr = safeAddress ?? getDefaultSafeAddress(config)
   return useQuery<SafeInfo>({
-    queryKey: ['safe', 'info', addr],
+    queryKey: ['safe', 'info', 'onchain', addr],
     queryFn: async () => {
-      const apiKit = getApiKit()
-      const info = await apiKit.getSafeInfo(addr)
-      return {
-        address: addr,
-        owners: info.owners,
-        threshold: info.threshold,
-        nonce: info.nonce,
+      try {
+        const publicClient = getPublicClient()
+        const [owners, threshold, nonce] = await Promise.all([
+          publicClient.readContract({
+            address: addr,
+            abi: SAFE_ON_CHAIN_ABI,
+            functionName: 'getOwners',
+          }) as Promise<readonly `0x${string}`[]>,
+          publicClient.readContract({
+            address: addr,
+            abi: SAFE_ON_CHAIN_ABI,
+            functionName: 'getThreshold',
+          }) as Promise<bigint>,
+          publicClient.readContract({
+            address: addr,
+            abi: SAFE_ON_CHAIN_ABI,
+            functionName: 'nonce',
+          }) as Promise<bigint>,
+        ])
+        return {
+          address: addr,
+          owners: owners.map((o) => getAddress(o)),
+          threshold: Number(threshold),
+          nonce: Number(nonce),
+        }
+      } catch {
+        const apiKit = getApiKit()
+        const info = await apiKit.getSafeInfo(addr)
+        return {
+          address: addr,
+          owners: info.owners,
+          threshold: info.threshold,
+          nonce: Number(info.nonce),
+        }
       }
     },
     staleTime: 300_000,
@@ -354,6 +411,124 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
   })
 }
 
+async function readSafeInfo(addr: `0x${string}`): Promise<SafeInfo> {
+  try {
+    const publicClient = getPublicClient()
+    const [owners, threshold, nonce] = await Promise.all([
+      publicClient.readContract({
+        address: addr,
+        abi: SAFE_ON_CHAIN_ABI,
+        functionName: 'getOwners',
+      }) as Promise<readonly `0x${string}`[]>,
+      publicClient.readContract({
+        address: addr,
+        abi: SAFE_ON_CHAIN_ABI,
+        functionName: 'getThreshold',
+      }) as Promise<bigint>,
+      publicClient.readContract({
+        address: addr,
+        abi: SAFE_ON_CHAIN_ABI,
+        functionName: 'nonce',
+      }) as Promise<bigint>,
+    ])
+    return {
+      address: addr,
+      owners: owners.map((o) => getAddress(o)),
+      threshold: Number(threshold),
+      nonce: Number(nonce),
+    }
+  } catch {
+    const apiKit = getApiKit()
+    const info = await apiKit.getSafeInfo(addr)
+    return {
+      address: addr,
+      owners: info.owners,
+      threshold: info.threshold,
+      nonce: Number(info.nonce),
+    }
+  }
+}
+
+async function enrichPendingTx(
+  tx: SafeMultisigTransactionResponse,
+  vaultAssetMap?: Record<string, string>,
+  assetMetadata: Record<string, { symbol: string; decimals: number }> = {},
+): Promise<PendingSafeTx> {
+  const dataDecoded = tx.data ? await decodeTransactionData(tx.data, tx.to) : null
+  const confirmationsCount = tx.confirmations?.length ?? 0
+  return {
+    safeTxHash: tx.safeTxHash,
+    to: tx.to,
+    value: tx.value ?? '0',
+    data: tx.data ?? null,
+    operation: tx.operation ?? 0,
+    nonce: tx.nonce,
+    submissionDate: tx.modified ?? tx.submissionDate,
+    confirmationsRequired: tx.confirmationsRequired,
+    confirmations: tx.confirmations ?? [],
+    confirmationsCount,
+    isExecutable: confirmationsCount >= tx.confirmationsRequired,
+    dataDecoded,
+    summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata),
+  }
+}
+
+// ─── Fetch Pending Transactions (v2 — all configured Safes) ───────────────────
+
+export function useV2PendingSafeTransactions(vaultAssetMap?: Record<string, string>) {
+  const config = useVaultConfig()
+  const { data: assetMetadata } = useAssetMetadata()
+  const entries = getV2SafeEntries(config)
+  const addressesKey = entries.map((e) => e.address).join(',')
+  const vaultAssetMapKey = getVaultAssetMapKey(vaultAssetMap)
+  const assetMetadataKey = getAssetMetadataKey(assetMetadata)
+
+  return useQuery<RoleTaggedTx[]>({
+    queryKey: ['safe', 'pendingTxsV2', addressesKey, vaultAssetMapKey, assetMetadataKey],
+    queryFn: async () => {
+      const apiKit = getApiKit()
+      const safeInfoMap = new Map<string, SafeInfo>()
+      const merged = new Map<string, RoleTaggedTx>()
+
+      await Promise.all(
+        entries.map(async (entry) => {
+          const info = await readSafeInfo(entry.address)
+          safeInfoMap.set(entry.address.toLowerCase(), info)
+        }),
+      )
+
+      for (const entry of entries) {
+        const response = await apiKit.getPendingTransactions(entry.address)
+        const txs = response.results as SafeMultisigTransactionResponse[]
+        const enriched = await Promise.all(
+          txs.map((tx) => enrichPendingTx(tx, vaultAssetMap, assetMetadata ?? {})),
+        )
+
+        for (const tx of enriched) {
+          if (merged.has(tx.safeTxHash)) continue
+          const inferredRole = inferV2RoleFromMethod(tx.dataDecoded?.method) ?? entry.role
+          merged.set(tx.safeTxHash, {
+            ...tx,
+            roles: [inferredRole],
+            safeAddress: entry.address,
+            safeInfo: safeInfoMap.get(entry.address.toLowerCase()),
+          })
+        }
+      }
+
+      return Array.from(merged.values()).sort((a, b) => Number(a.nonce) - Number(b.nonce))
+    },
+    refetchInterval: (query) => {
+      if (isRateLimitedError(query.state.error)) return 90_000
+      const hasPending = (query.state.data?.length ?? 0) > 0
+      return hasPending ? 30_000 : 60_000
+    },
+    staleTime: 30_000,
+    enabled: entries.length > 0,
+    refetchIntervalInBackground: false,
+  })
+}
+
 // ─── Sign (Confirm) a Pending Transaction ─────────────────────────────────────
 
 export function useConfirmSafeTransaction(safeAddress?: `0x${string}`) {
@@ -383,6 +558,7 @@ export function useConfirmSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -413,6 +589,7 @@ export function useExecuteSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
       queryClient.invalidateQueries({ queryKey: ['safe', 'info'] })
     },
   })
@@ -443,13 +620,7 @@ export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
       const protocolKit = await initProtocolKit(provider, address, addr)
       const apiKit = getApiKit()
 
-      // Find the highest nonce already queued so the new tx is appended after
-      // all pending (unexecuted) transactions rather than conflicting with them.
-      const pending = await apiKit.getPendingTransactions(addr)
-      const pendingNonces = (pending.results as SafeMultisigTransactionResponse[]).map((tx) => Number(tx.nonce))
-      const nextNonce = pendingNonces.length > 0
-        ? Math.max(...pendingNonces) + 1
-        : undefined // empty queue -> let SDK use the on-chain nonce (already correct)
+      const nextNonce = await resolveNextSafeNonce(apiKit, addr)
 
       const safeTransaction = await protocolKit.createTransaction({
         transactions: [{ to: getAddress(to), data, value }],
@@ -474,6 +645,7 @@ export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -507,9 +679,7 @@ export function useProposeSafeMultiSendTransaction(safeAddress?: `0x${string}`) 
       const protocolKit = await initProtocolKit(provider, address, addr)
       const apiKit = getApiKit()
 
-      const pending = await apiKit.getPendingTransactions(addr)
-      const pendingNonces = (pending.results as SafeMultisigTransactionResponse[]).map((tx) => Number(tx.nonce))
-      const nextNonce = pendingNonces.length > 0 ? Math.max(...pendingNonces) + 1 : undefined
+      const nextNonce = await resolveNextSafeNonce(apiKit, addr)
 
       const safeTransaction = await protocolKit.createTransaction({
         transactions: txs.map((tx) => ({
@@ -538,6 +708,7 @@ export function useProposeSafeMultiSendTransaction(safeAddress?: `0x${string}`) 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -578,6 +749,7 @@ export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
+      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }

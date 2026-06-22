@@ -4,6 +4,7 @@ import { useEffect, useTransition, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAccount } from 'wagmi'
 import { useRoleCheck } from '@/lib/safe/hooks'
+import { useVaultConfig } from '@/lib/vault-context'
 import type { NavPageData } from '@/lib/nav-reader'
 import RoleBanner from './RoleBanner'
 import NavSummaryCards from './NavSummaryCards'
@@ -15,6 +16,8 @@ import AssetNavBreakdown from './AssetNavBreakdown'
 const AUTO_REFRESH_MS = 60_000
 
 export default function NavClient({ data }: { data: NavPageData }) {
+  const config = useVaultConfig()
+  const isV2Nav = config.version === 2
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [secondsAgo, setSecondsAgo] = useState(0)
@@ -100,8 +103,7 @@ export default function NavClient({ data }: { data: NavPageData }) {
         adminSafe={admin.safeAddress}
       />
 
-      {/* NAV summary cards */}
-      <NavSummaryCards data={data} />
+      {!isV2Nav && <NavSummaryCards data={data} />}
 
       {/* Update NAV action */}
       <UpdateNavSection
@@ -110,20 +112,22 @@ export default function NavClient({ data }: { data: NavPageData }) {
         isConnected={isConnected}
       />
 
-      {/* Harvest fee actions (operator-gated) */}
-      <HarvestManagementFeeSection
-        data={data}
-        canPropose={operator.canPropose}
-        isConnected={isConnected}
-      />
-      <HarvestPerformanceFeeSection
-        data={data}
-        canPropose={operator.canPropose}
-        isConnected={isConnected}
-      />
+      {!isV2Nav && (
+        <>
+          <HarvestManagementFeeSection
+            data={data}
+            canPropose={operator.canPropose}
+            isConnected={isConnected}
+          />
+          <HarvestPerformanceFeeSection
+            data={data}
+            canPropose={operator.canPropose}
+            isConnected={isConnected}
+          />
+        </>
+      )}
 
-      {/* Per-asset breakdown */}
-      <AssetNavBreakdown data={data} roles={roles} />
+      {!isV2Nav && <AssetNavBreakdown data={data} roles={roles} />}
     </div>
   )
 }
