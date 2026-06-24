@@ -20,12 +20,15 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     haVaultReaderAddress: '0x496D50AC1b149e0af4116aB021153c2a646F2f40',
     safe: {
       default: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
+      operator: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
+      admin: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
     },
     version: 2,
     fundContractAddress: '0x2cA5cF8EF7B35c2c7dF4D7C204A58c6F16d77291',
     underlyingAssetAddress: '0xA47f8e1520b0a7D7474734e5c7e405114baB518d',
     balanceContractAddress: '0x8bf477eAAb88E083c1c7B1A6791fC73EDec2d4EB',
     perpNavContractAddress: '0x15D21B1C017fC5101907f430e9BD925AcdB176B2',
+    fundAdminManagerContractAddress: '0x65D389daEa19fC9a704b17a81F953d70cEAa5D34',
     timelockControllerAddress: '0x8290eF21817924C2b7790886D81c766515a8bc82',
   },
 ]

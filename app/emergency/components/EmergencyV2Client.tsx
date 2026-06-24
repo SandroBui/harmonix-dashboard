@@ -20,7 +20,9 @@ import type {
 } from '@/lib/emergency-v2-reader'
 import { truncateAddress } from '@/lib/format'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
+import { resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { useVaultConfig } from '@/lib/vault-context'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 import { V2_ENCODED_ROLE_HASHES } from '@/lib/v2-role-hashes'
 
 const AUTO_REFRESH_MS = 30_000
@@ -135,8 +137,8 @@ export default function EmergencyV2Client({ data }: Props) {
   const defaultContractKey = configuredContracts[0]?.key ?? 'fund'
 
   const [contractKey, setContractKey] = useState<EmergencyV2ContractKey>(defaultContractKey)
-  const [execMode, setExecMode] = useState<ExecMode>('eoa')
-  const [safeAddress, setSafeAddress] = useState(data.safes[0]?.address ?? '')
+  const [execMode, setExecMode] = useState<ExecMode>('safe')
+  const [safeLabel, setSafeLabel] = useState(data.safes[0]?.label ?? '')
   const [pauseActionOverride, setPauseActionOverride] = useState<boolean | null>(null)
   const [pauseStates, setPauseStates] = useState<Record<EmergencyV2ContractKey, ContractPauseState>>(() =>
     buildInitialPauseStates(data.contracts),
@@ -252,14 +254,16 @@ export default function EmergencyV2Client({ data }: Props) {
     return () => clearInterval(interval)
   }, [fetchPauseStatus])
 
-  const safeAddr =
-    safeAddress && isAddress(safeAddress) ? (getAddress(safeAddress) as `0x${string}`) : undefined
+  const safeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(data.safes, safeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [data.safes, safeLabel])
   const { data: safeInfo } = useSafeInfo(execMode === 'safe' ? safeAddr : undefined)
   const isSafeOwner = Boolean(
     address && safeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
   )
 
-  const { data: eoaCanAdmin } = useReadContract({
+  const { data: eoaHasAdmin } = useReadContract({
     address: contractAddress,
     abi: contractAbi,
     functionName: 'hasRole',
@@ -267,13 +271,32 @@ export default function EmergencyV2Client({ data }: Props) {
     query: { enabled: execMode === 'eoa' && Boolean(contractAddress && address) },
   })
 
-  const { data: safeCanAdmin } = useReadContract({
+  const { data: eoaHasPause } = useReadContract({
+    address: contractAddress,
+    abi: contractAbi,
+    functionName: 'hasRole',
+    args: address && contractAddress ? [V2_ENCODED_ROLE_HASHES.PAUSE, address] : undefined,
+    query: { enabled: execMode === 'eoa' && Boolean(contractAddress && address) },
+  })
+
+  const { data: safeHasAdmin } = useReadContract({
     address: contractAddress,
     abi: contractAbi,
     functionName: 'hasRole',
     args: safeAddr && contractAddress ? [V2_ENCODED_ROLE_HASHES.ADMIN, safeAddr] : undefined,
     query: { enabled: execMode === 'safe' && Boolean(contractAddress && safeAddr) },
   })
+
+  const { data: safeHasPause } = useReadContract({
+    address: contractAddress,
+    abi: contractAbi,
+    functionName: 'hasRole',
+    args: safeAddr && contractAddress ? [V2_ENCODED_ROLE_HASHES.PAUSE, safeAddr] : undefined,
+    query: { enabled: execMode === 'safe' && Boolean(contractAddress && safeAddr) },
+  })
+
+  const eoaCanPauseContract = eoaHasAdmin === true || eoaHasPause === true
+  const safeCanPauseContract = safeHasAdmin === true || safeHasPause === true
 
   const proposeTx = useProposeSafeTransaction(safeAddr)
 
@@ -303,9 +326,9 @@ export default function EmergencyV2Client({ data }: Props) {
     }
   }, [eoaSucceeded, eoaTxHash, contractKey, applyOptimisticPause, resetEoa])
 
-  const canExecuteEoa = isConnected && !isWrongChain && eoaCanAdmin === true
+  const canExecuteEoa = isConnected && !isWrongChain && eoaCanPauseContract
   const canExecuteSafe =
-    isConnected && !isWrongChain && isSafeOwner && Boolean(safeAddr) && safeCanAdmin === true
+    isConnected && !isWrongChain && isSafeOwner && Boolean(safeAddr) && safeCanPauseContract
   const canExecute = execMode === 'eoa' ? canExecuteEoa : canExecuteSafe
 
   const eoaSuccess = eoaSucceeded
@@ -386,17 +409,41 @@ export default function EmergencyV2Client({ data }: Props) {
   const roleHint = useMemo(() => {
     if (!isConnected) return null
     if (execMode === 'eoa') {
-      if (eoaCanAdmin === true) return 'Your wallet holds ADMIN on this contract.'
-      if (eoaCanAdmin === false) return 'Your wallet does not hold ADMIN on this contract.'
-      return 'Checking ADMIN role…'
+      if (eoaCanPauseContract) {
+        if (eoaHasAdmin && eoaHasPause) return 'Your wallet holds ADMIN and PAUSE on this contract.'
+        if (eoaHasAdmin) return 'Your wallet holds ADMIN on this contract.'
+        return 'Your wallet holds PAUSE on this contract.'
+      }
+      if (eoaHasAdmin === false && eoaHasPause === false) {
+        return 'Your wallet does not hold ADMIN or PAUSE on this contract.'
+      }
+      return 'Checking ADMIN / PAUSE roles…'
     }
     if (!safeAddr) return null
     const parts: string[] = []
     parts.push(isSafeOwner ? 'You are a Safe owner.' : 'You are not an owner of this Safe.')
-    if (safeCanAdmin === true) parts.push('Safe holds ADMIN on this contract.')
-    else if (safeCanAdmin === false) parts.push('Safe does not hold ADMIN on this contract.')
+    if (safeCanPauseContract) {
+      if (safeHasAdmin && safeHasPause) parts.push('Safe holds ADMIN and PAUSE on this contract.')
+      else if (safeHasAdmin) parts.push('Safe holds ADMIN on this contract.')
+      else parts.push('Safe holds PAUSE on this contract.')
+    } else if (safeHasAdmin === false && safeHasPause === false) {
+      parts.push('Safe does not hold ADMIN or PAUSE on this contract.')
+    } else {
+      parts.push('Checking ADMIN / PAUSE roles…')
+    }
     return parts.join(' ')
-  }, [isConnected, execMode, eoaCanAdmin, safeAddr, isSafeOwner, safeCanAdmin])
+  }, [
+    isConnected,
+    execMode,
+    eoaCanPauseContract,
+    eoaHasAdmin,
+    eoaHasPause,
+    safeAddr,
+    isSafeOwner,
+    safeCanPauseContract,
+    safeHasAdmin,
+    safeHasPause,
+  ])
 
   function handleRefresh() {
     optimisticPauseRef.current = null
@@ -409,9 +456,9 @@ export default function EmergencyV2Client({ data }: Props) {
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Pause or unpause v2 contracts via{' '}
           <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">setPaused(bool)</code>. Caller must hold{' '}
-          <span className="font-medium">ADMIN</span> on the selected contract. Pause state is inferred from the most
-          recent successful <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">setPaused</code> transaction
-          on HyperEVMScan.
+          <span className="font-medium">ADMIN</span> or <span className="font-medium">PAUSE</span> on the selected
+          contract. Pause state is inferred from the most recent successful{' '}
+          <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">setPaused</code> transaction on HyperEVMScan.
         </p>
         <button
           type="button"
@@ -568,15 +615,15 @@ export default function EmergencyV2Client({ data }: Props) {
           {execMode === 'safe' && (
             <div className="mt-2">
               <select
-                value={safeAddress}
+                value={safeLabel}
                 onChange={(e) => {
-                  setSafeAddress(e.target.value)
+                  setSafeLabel(e.target.value)
                   resetTxState()
                 }}
                 className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
               >
                 {data.safes.map((s) => (
-                  <option key={s.address} value={s.address}>
+                  <option key={s.label} value={s.label}>
                     {s.label} ({truncate(s.address)})
                   </option>
                 ))}
@@ -609,7 +656,7 @@ export default function EmergencyV2Client({ data }: Props) {
           </button>
           {proposeTx.isSuccess && execMode === 'safe' && (
             <Link
-              href="/safe-transactions"
+              href={safeTransactionsHref(vaultConfig.slug)}
               className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
             >
               View pending Safe txs →

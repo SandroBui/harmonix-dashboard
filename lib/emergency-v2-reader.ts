@@ -7,7 +7,7 @@ import {
   type EtherscanTx,
 } from './hyperevmscan'
 import { getFundContractAddress } from './nav-contract-targets'
-import { getDefaultSafeAddress } from './safe/roles'
+import { buildV2SafeDropdownOptions } from './safe/v2-safes'
 import type { VaultGroupConfig } from './vault-group-config'
 
 export type EmergencyV2ContractKey = 'fund'
@@ -73,21 +73,7 @@ function buildContracts(config: VaultGroupConfig): EmergencyV2ContractEntry[] {
 }
 
 function buildSafes(config: VaultGroupConfig): EmergencyV2SafeOption[] {
-  const safeEntries: EmergencyV2SafeOption[] = []
-  const seen = new Set<string>()
-  const candidates: { label: string; address?: `0x${string}` }[] = [
-    { label: 'Default Safe', address: config.safe.default },
-    { label: 'Operator Safe', address: config.safe.operator },
-    { label: 'Admin Safe', address: config.safe.admin },
-  ]
-  for (const { label, address } of candidates) {
-    const resolved = address ?? getDefaultSafeAddress(config)
-    const lower = resolved.toLowerCase()
-    if (seen.has(lower) || lower === '0x0000000000000000000000000000000000000000') continue
-    seen.add(lower)
-    safeEntries.push({ label, address: resolved })
-  }
-  return safeEntries
+  return buildV2SafeDropdownOptions(config)
 }
 
 function decodeSetPausedTx(

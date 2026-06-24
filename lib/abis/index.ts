@@ -15,3 +15,4 @@ export {HA_TIMELOCK_CONTROLLER_ABI} from './ha-timelock-controller';
 export {HA_TIME_LOCK_ABI} from './ha-time-lock';
 export { OWNABLE_ABI } from './ownable';
 export { PROXY_ADMIN_ABI } from './proxy-admin';
+export { FUND_ADMIN_MANAGER_ABI } from './fund-admin-manager';

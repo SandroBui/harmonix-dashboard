@@ -1,12 +1,13 @@
-import { HA_VAULT_READER_V2_ABI } from './contracts'
 import { getPublicClient } from './client'
 import { getNavPageData } from './nav-reader'
 import {
   getBalanceContractAddress,
+  getFundAdminManagerAddress,
   getFundContractAddress,
   getPerpNavContractAddress,
   getTimelockControllerAddress,
 } from './nav-contract-targets'
+import { readVaultSettingV2 } from './vault-setting-v2'
 import type { VaultGroupConfig } from './vault-group-config'
 
 export type VaultConfigV2Data = {
@@ -15,11 +16,15 @@ export type VaultConfigV2Data = {
     fundContractReader: string
     balanceContract: string
     fundNavContract: string
+    fundAdminManager: string
     timelock: string
   }
   vaultConfig: {
     minimumSupply: string
     capacity: string
+    ppsDeviationBps: string
+    maxNavStaleness: string
+    networkCost: string
   }
   fees: {
     managementFeeRate: string
@@ -50,13 +55,13 @@ export async function getVaultConfigV2Data(config: VaultGroupConfig): Promise<Va
   const navData = await getNavPageData(config)
 
   const fundContractAddress = getFundContractAddress(config)
+  const fundAdminManagerAddress = getFundAdminManagerAddress(config)
   const publicClient = getPublicClient()
-  const vaultSetting = await publicClient.readContract({
-    address: config.haVaultReaderAddress,
-    abi: HA_VAULT_READER_V2_ABI,
-    functionName: 'getVaultSetting',
-    args: [fundContractAddress],
-  })
+  const vaultSetting = await readVaultSettingV2(
+    publicClient,
+    config.haVaultReaderAddress,
+    fundContractAddress,
+  )
 
   return {
     addresses: {
@@ -64,11 +69,15 @@ export async function getVaultConfigV2Data(config: VaultGroupConfig): Promise<Va
       fundContractReader: config.haVaultReaderAddress.toLowerCase(),
       balanceContract: getBalanceContractAddress(config).toLowerCase(),
       fundNavContract: perpNavAddress.toLowerCase(),
+      fundAdminManager: fundAdminManagerAddress.toLowerCase(),
       timelock: getTimelockControllerAddress(config).toLowerCase(),
     },
     vaultConfig: {
       minimumSupply: vaultSetting.minimumSupply.toString(),
       capacity: vaultSetting.capacity.toString(),
+      ppsDeviationBps: vaultSetting.ppsDeviationBps.toString(),
+      maxNavStaleness: vaultSetting.maxNavStaleness.toString(),
+      networkCost: vaultSetting.networkCost.toString(),
     },
     fees: {
       managementFeeRate: navData.managementFeeRate,

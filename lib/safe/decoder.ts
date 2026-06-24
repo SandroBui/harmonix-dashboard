@@ -1,6 +1,6 @@
 import { decodeFunctionData, toFunctionSelector, getAddress } from 'viem'
 import { VAULT_ASSET_ABI, FUND_NAV_FEED_ABI, VAULT_MANAGER_ABI, FUND_VAULT_ABI, HA_BASE_ABI, VAULT_MANAGER_ADMIN_ABI, ACCESS_MANAGER_ABI, HA_TIMELOCK_CONTROLLER_ABI } from '@/lib/abis'
-import { BALANCE_CONTRACT_ABI, FUND_CONTRACT_ABI, HA_TIME_LOCK_ABI, PERP_NAV_CONTRACT_ABI } from '@/lib/abis'
+import { BALANCE_CONTRACT_ABI, FUND_ADMIN_MANAGER_ABI, FUND_CONTRACT_ABI, HA_TIME_LOCK_ABI, PERP_NAV_CONTRACT_ABI } from '@/lib/abis'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
@@ -103,6 +103,7 @@ function decodeLocally(data: string): DataDecoded | null {
     HA_TIMELOCK_CONTROLLER_ABI,
     BALANCE_CONTRACT_ABI,
     FUND_CONTRACT_ABI,
+    FUND_ADMIN_MANAGER_ABI,
     HA_TIME_LOCK_ABI,
     PERP_NAV_CONTRACT_ABI,
     ERC20_ABI,
@@ -309,6 +310,50 @@ export function summarizeDecodedData(
   // ── VaultManager methods ────────────────────────────────────────────────
   if (method === 'updateNav') {
     return 'Update NAV — recompute and persist PPS on-chain'
+  }
+
+  if (method === 'updateVaultSetting') {
+    return 'Update vault settings (supply, capacity, fees, NAV guards)'
+  }
+
+  if (method === 'updateMinimumSupply') {
+    const value = parameters.find((p) => p.name === '_minimumSupply')?.value ?? '?'
+    return `Update minimum supply → ${value}`
+  }
+
+  if (method === 'updateCapacity') {
+    const value = parameters.find((p) => p.name === '_capacity')?.value ?? '?'
+    return `Update capacity → ${value}`
+  }
+
+  if (method === 'updatePpsDeviationBps') {
+    const value = parameters.find((p) => p.name === '_ppsDeviationBps')?.value ?? '?'
+    return `Update max PPS deviation → ${value} bps`
+  }
+
+  if (method === 'updateMaxNavStaleness') {
+    const value = parameters.find((p) => p.name === '_maxNavStaleness')?.value ?? '?'
+    return `Update max NAV staleness → ${value}s`
+  }
+
+  if (method === 'updateManagementFeeReceiver') {
+    const addr = parameters.find((p) => p.name === '_managementFeeReceiver')?.value ?? ''
+    return `Update management fee receiver → ${truncate(addr)}`
+  }
+
+  if (method === 'updateManagementFeeRate') {
+    const value = parameters.find((p) => p.name === '_managementFeeRate')?.value ?? '?'
+    return `Update management fee rate → ${value}`
+  }
+
+  if (method === 'updatePerformanceFeeReceiver') {
+    const addr = parameters.find((p) => p.name === '_performanceFeeReceiver')?.value ?? ''
+    return `Update performance fee receiver → ${truncate(addr)}`
+  }
+
+  if (method === 'updatePerformanceFeeRate') {
+    const value = parameters.find((p) => p.name === '_performanceFeeRate')?.value ?? '?'
+    return `Update performance fee rate → ${value}`
   }
 
   // ── FundVault methods ──────────────────────────────────────────────────

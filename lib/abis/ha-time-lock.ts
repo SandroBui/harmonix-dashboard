@@ -100,6 +100,13 @@ export const HA_TIME_LOCK_ABI = [
     stateMutability: 'payable',
   },
   {
+    type: 'function',
+    name: 'cancel',
+    inputs: [{ name: 'id', type: 'bytes32' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
     type: 'event',
     name: 'CallScheduled',
     inputs: [

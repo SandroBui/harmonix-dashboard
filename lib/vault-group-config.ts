@@ -43,6 +43,10 @@ export type VaultGroupConfig = {
   balanceContractAddress?: `0x${string}`
   /** v2: perp NAV contract for role management */
   perpNavContractAddress?: `0x${string}`
+  /** v2: fund admin manager contract for role management */
+  fundAdminManagerContractAddress?: `0x${string}`
+  /** v2: optional ProxyAdmin for Fund Admin Manager when EIP-1967 admin slot is empty */
+  fundAdminManagerProxyAdminAddress?: `0x${string}`
   /** v2: OpenZeppelin TimelockController for upgrades */
   timelockControllerAddress?: `0x${string}`
 }

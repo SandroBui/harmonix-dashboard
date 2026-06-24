@@ -38,3 +38,11 @@ export function saveStoredUpgradeOp(slug: string, op: StoredUpgradeOp) {
 export function storedIds(slug: string): `0x${string}`[] {
   return readStoredUpgradeOps(slug).map((o) => o.id)
 }
+
+export function removeStoredUpgradeOp(slug: string, id: `0x${string}`) {
+  if (typeof window === 'undefined') return
+  const existing = readStoredUpgradeOps(slug)
+  const filtered = existing.filter((e) => e.id.toLowerCase() !== id.toLowerCase())
+  if (filtered.length === existing.length) return
+  localStorage.setItem(storageKey(slug), JSON.stringify(filtered))
+}
