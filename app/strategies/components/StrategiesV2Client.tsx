@@ -12,11 +12,11 @@ import { encodeFunctionData, getAddress, isAddress, parseUnits } from 'viem'
 import { BALANCE_CONTRACT_ABI, FUND_CONTRACT_ABI } from '@/lib/abis'
 import { getPublicClient } from '@/lib/client'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
-import { getDefaultSafeAddress, getSafeAddressForRole } from '@/lib/safe/roles'
+import { buildV2SafeDropdownOptions, resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { useVaultConfig } from '@/lib/vault-context'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
-import StrategiesV2RoleBanner from './StrategiesV2RoleBanner'
 import { V2_ENCODED_ROLE_HASHES } from '@/lib/v2-role-hashes'
 import type { StrategyV2PageData } from '@/lib/strategy-v2-reader'
 
@@ -66,32 +66,6 @@ type OperatorEoaAction = 'transfer' | 'approve' | 'acquire'
 type ActionTxState = { isPending: boolean; isSuccess: boolean; isError: boolean }
 
 type SafeOption = { label: string; address: string }
-
-function buildRoleSafeOptions(
-  config: ReturnType<typeof useVaultConfig>,
-  role: 'operator' | 'admin',
-): SafeOption[] {
-  const seen = new Set<string>()
-  const out: SafeOption[] = []
-  const candidates =
-    role === 'operator'
-      ? [
-          { label: 'Operator Safe', address: config.safe.operator },
-          { label: 'Default Safe', address: config.safe.default },
-        ]
-      : [
-          { label: 'Admin Safe', address: config.safe.admin },
-          { label: 'Default Safe', address: config.safe.default },
-        ]
-  for (const { label, address } of candidates) {
-    const resolved = address ?? getDefaultSafeAddress(config)
-    const lower = resolved.toLowerCase()
-    if (seen.has(lower) || lower === '0x0000000000000000000000000000000000000000') continue
-    seen.add(lower)
-    out.push({ label, address: resolved })
-  }
-  return out
-}
 
 function getActionButtonState(
   mode: ExecMode,
@@ -248,8 +222,8 @@ type ExecuteAsSectionProps = {
   walletAddress?: string
   walletHasRole?: boolean
   safeOptions: SafeOption[]
-  safeAddress: string
-  onSafeChange: (address: string) => void
+  safeLabel: string
+  onSafeLabelChange: (label: string) => void
   isSafeOwner: boolean
   safeHasRole?: boolean
 }
@@ -262,13 +236,14 @@ function ExecuteAsSection({
   walletAddress,
   walletHasRole,
   safeOptions,
-  safeAddress,
-  onSafeChange,
+  safeLabel,
+  onSafeLabelChange,
   isSafeOwner,
   safeHasRole,
 }: ExecuteAsSectionProps) {
-  const safeAddr =
-    safeAddress && isAddress(safeAddress) ? (getAddress(safeAddress) as `0x${string}`) : undefined
+  const safeAddr = resolveV2SafeAddressFromLabel(safeOptions, safeLabel)
+  const resolvedSafeAddr =
+    safeAddr && isAddress(safeAddr) ? (getAddress(safeAddr) as `0x${string}`) : undefined
 
   return (
     <div className="mb-4">
@@ -303,17 +278,17 @@ function ExecuteAsSection({
       {mode === 'safe' && (
         <div className="mt-2">
           <select
-            value={safeAddress}
-            onChange={(e) => onSafeChange(e.target.value)}
+            value={safeLabel}
+            onChange={(e) => onSafeLabelChange(e.target.value)}
             className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
           >
             {safeOptions.map((s) => (
-              <option key={s.address} value={s.address}>
+              <option key={s.label} value={s.label}>
                 {s.label} ({truncateAddress(s.address)})
               </option>
             ))}
           </select>
-          {safeAddr && (
+          {resolvedSafeAddr && (
             <>
               <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                 {isSafeOwner ? 'You are a Safe owner' : 'You are not an owner of this Safe'}
@@ -339,12 +314,10 @@ export default function StrategiesV2Client({ data }: Props) {
   const config = useVaultConfig()
   const { address, isConnected, chainId } = useAccount()
 
-  const operatorSafeOptions = useMemo(() => buildRoleSafeOptions(config, 'operator'), [config])
+  const operatorSafeOptions = useMemo(() => buildV2SafeDropdownOptions(config), [config])
 
-  const [operatorExecMode, setOperatorExecMode] = useState<ExecMode>('eoa')
-  const [operatorSafeAddress, setOperatorSafeAddress] = useState(
-    operatorSafeOptions[0]?.address ?? '',
-  )
+  const [operatorExecMode, setOperatorExecMode] = useState<ExecMode>('safe')
+  const [operatorSafeLabel, setOperatorSafeLabel] = useState(operatorSafeOptions[0]?.label ?? '')
   const [lastOperatorEoaAction, setLastOperatorEoaAction] = useState<OperatorEoaAction | null>(
     null,
   )
@@ -373,12 +346,10 @@ export default function StrategiesV2Client({ data }: Props) {
 
   const operatorRole = V2_ENCODED_ROLE_HASHES.OPERATOR
 
-  const bannerOperatorSafe = getSafeAddressForRole(config, 'operator')
-
-  const operatorSafeAddr =
-    operatorSafeAddress && isAddress(operatorSafeAddress)
-      ? (getAddress(operatorSafeAddress) as `0x${string}`)
-      : undefined
+  const operatorSafeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(operatorSafeOptions, operatorSafeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [operatorSafeOptions, operatorSafeLabel])
 
   const { data: operatorSafeInfo } = useSafeInfo(
     operatorExecMode === 'safe' ? operatorSafeAddr : undefined,
@@ -402,13 +373,6 @@ export default function StrategiesV2Client({ data }: Props) {
     functionName: 'hasRole',
     args: operatorSafeAddr ? [operatorRole, operatorSafeAddr] : undefined,
     query: { enabled: Boolean(operatorSafeAddr) },
-  })
-
-  const { data: bannerOperatorSafeHasRole } = useReadContract({
-    address: balanceContractAddress,
-    abi: BALANCE_CONTRACT_ABI,
-    functionName: 'hasRole',
-    args: [operatorRole, bannerOperatorSafe],
   })
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -827,13 +791,6 @@ export default function StrategiesV2Client({ data }: Props) {
 
   return (
     <div className="space-y-6">
-      <StrategiesV2RoleBanner
-        isConnected={isConnected}
-        walletHasOperator={walletHasOperator === true}
-        operatorSafe={bannerOperatorSafe}
-        operatorSafeHasRole={bannerOperatorSafeHasRole === true}
-      />
-
       <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900">
         <div className="mb-4 flex items-center gap-2">
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">
@@ -936,9 +893,9 @@ export default function StrategiesV2Client({ data }: Props) {
           walletAddress={address}
           walletHasRole={walletHasOperator}
           safeOptions={operatorSafeOptions}
-          safeAddress={operatorSafeAddress}
-          onSafeChange={(addr) => {
-            setOperatorSafeAddress(addr)
+          safeLabel={operatorSafeLabel}
+          onSafeLabelChange={(label) => {
+            setOperatorSafeLabel(label)
             resetOperatorTxState()
           }}
           isSafeOwner={operatorIsSafeOwner}
@@ -976,7 +933,7 @@ export default function StrategiesV2Client({ data }: Props) {
 
           {transferTxState.isSuccess && operatorExecMode === 'safe' && (
             <Link
-              href="/safe-transactions"
+              href={safeTransactionsHref(config.slug)}
               className="text-xs text-blue-600 hover:underline dark:text-blue-400"
             >
               View pending →
@@ -1092,9 +1049,9 @@ export default function StrategiesV2Client({ data }: Props) {
           walletAddress={address}
           walletHasRole={walletHasOperator}
           safeOptions={operatorSafeOptions}
-          safeAddress={operatorSafeAddress}
-          onSafeChange={(addr) => {
-            setOperatorSafeAddress(addr)
+          safeLabel={operatorSafeLabel}
+          onSafeLabelChange={(label) => {
+            setOperatorSafeLabel(label)
             resetOperatorTxState()
           }}
           isSafeOwner={operatorIsSafeOwner}
@@ -1132,7 +1089,7 @@ export default function StrategiesV2Client({ data }: Props) {
 
           {approveTxState.isSuccess && operatorExecMode === 'safe' && (
             <Link
-              href="/safe-transactions"
+              href={safeTransactionsHref(config.slug)}
               className="text-xs text-blue-600 hover:underline dark:text-blue-400"
             >
               View pending →
@@ -1328,9 +1285,9 @@ export default function StrategiesV2Client({ data }: Props) {
           walletAddress={address}
           walletHasRole={walletHasOperator}
           safeOptions={operatorSafeOptions}
-          safeAddress={operatorSafeAddress}
-          onSafeChange={(addr) => {
-            setOperatorSafeAddress(addr)
+          safeLabel={operatorSafeLabel}
+          onSafeLabelChange={(label) => {
+            setOperatorSafeLabel(label)
             resetOperatorTxState()
           }}
           isSafeOwner={operatorIsSafeOwner}
@@ -1368,7 +1325,7 @@ export default function StrategiesV2Client({ data }: Props) {
 
           {acquireTxState.isSuccess && operatorExecMode === 'safe' && (
             <Link
-              href="/safe-transactions"
+              href={safeTransactionsHref(config.slug)}
               className="text-xs text-blue-600 hover:underline dark:text-blue-400"
             >
               View pending →

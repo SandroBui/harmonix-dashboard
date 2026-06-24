@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useId, useEffect } from 'react'
+import { useState, useId, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   encodeFunctionData,
   encodeAbiParameters,
@@ -12,18 +12,23 @@ import {
   keccak256,
   isHex,
 } from 'viem'
-import { HA_TIME_LOCK_ABI } from '@/lib/abis'
+import { HA_TIME_LOCK_ABI, OWNABLE_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
 import { truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import { OZ_PROPOSER_ROLE } from '@/lib/oz-timelock-roles'
+import { readProxyAdminOwner } from '@/lib/proxy-admin'
 import { saveStoredUpgradeOp } from '@/lib/upgrades-v2-storage'
 import type { UpgradesV2PageData } from '@/lib/upgrades-v2-reader'
 import {
   buildUpgradeScheduleArgsFromInputs,
+  resolveProxyUpgradeMode,
+  resolveUpgradeDelivery,
   type UpgradeMode,
 } from '@/lib/upgrade-v2-calldata'
+import { resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { useVaultConfig } from '@/lib/vault-context'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 
 function randomBytes32(): `0x${string}` {
   const buf = new Uint8Array(32)
@@ -70,8 +75,8 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
   const controllerAddress = data.controllerAddress
   const minDelaySeconds = data.minDelay
 
-  const [execMode, setExecMode] = useState<ExecMode>('eoa')
-  const [safeAddress, setSafeAddress] = useState(proposerSafes[0]?.address ?? '')
+  const [execMode, setExecMode] = useState<ExecMode>('safe')
+  const [safeLabel, setSafeLabel] = useState(proposerSafes[0]?.label ?? '')
 
   const [delay, setDelay] = useState(minDelaySeconds)
   useEffect(() => {
@@ -100,12 +105,78 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     (c) => c.address.toLowerCase() === proxyAddr.toLowerCase(),
   )
 
-  const upgradeMode: UpgradeMode | null = knownEntry?.upgradeMode ?? null
-  const proxyAdminAddress = knownEntry?.proxyAdminAddress
+  const proxyAddressResolved =
+    proxyAddr && isAddress(proxyAddr) ? (getAddress(proxyAddr) as `0x${string}`) : undefined
 
-  const safeAddr =
-    safeAddress && isAddress(safeAddress) ? (getAddress(safeAddress) as `0x${string}`) : undefined
-  const { data: safeInfo } = useSafeInfo(execMode === 'safe' ? safeAddr : undefined)
+  const { data: liveProxyMeta, isFetching: liveProxyMetaLoading } = useQuery({
+    queryKey: ['upgrade-v2-proxy-meta', vaultConfig.slug, proxyAddressResolved],
+    queryFn: async () => {
+      const { upgradeMode, proxyAdminAddress } = await resolveProxyUpgradeMode(
+        proxyAddressResolved!,
+        vaultConfig,
+      )
+      const proxyAdminOwner = proxyAdminAddress
+        ? await readProxyAdminOwner(proxyAdminAddress)
+        : undefined
+      return { upgradeMode, proxyAdminAddress, proxyAdminOwner }
+    },
+    enabled: Boolean(proxyAddressResolved),
+    staleTime: 30_000,
+  })
+
+  const upgradeMode: UpgradeMode | null =
+    liveProxyMeta?.upgradeMode ?? knownEntry?.upgradeMode ?? null
+  const proxyAdminAddress = liveProxyMeta?.proxyAdminAddress ?? knownEntry?.proxyAdminAddress
+  const cachedProxyAdminOwner = knownEntry?.proxyAdminOwner
+
+  const proxyAdminResolved =
+    proxyAdminAddress && isAddress(proxyAdminAddress)
+      ? (getAddress(proxyAdminAddress) as `0x${string}`)
+      : undefined
+
+  const { data: liveProxyAdminOwner } = useReadContract({
+    address: proxyAdminResolved,
+    abi: OWNABLE_ABI,
+    functionName: 'owner',
+    query: { enabled: Boolean(proxyAdminResolved) },
+  })
+
+  const proxyAdminOwner = useMemo(() => {
+    if (liveProxyAdminOwner) return getAddress(liveProxyAdminOwner) as `0x${string}`
+    if (liveProxyMeta?.proxyAdminOwner) return liveProxyMeta.proxyAdminOwner
+    if (cachedProxyAdminOwner && isAddress(cachedProxyAdminOwner)) {
+      return getAddress(cachedProxyAdminOwner) as `0x${string}`
+    }
+    return undefined
+  }, [liveProxyAdminOwner, liveProxyMeta?.proxyAdminOwner, cachedProxyAdminOwner])
+
+  const upgradeDelivery =
+    upgradeMode !== null
+      ? resolveUpgradeDelivery(
+          { upgradeMode, proxyAdminOwner },
+          controllerAddress ?? null,
+        )
+      : 'timelock'
+  const isSafeDirect = upgradeDelivery === 'safe-direct'
+
+  const ownerSafeAddr = proxyAdminOwner
+
+  useEffect(() => {
+    if (!isSafeDirect || !ownerSafeAddr) return
+    const match = proposerSafes.find(
+      (s) => s.address.toLowerCase() === ownerSafeAddr.toLowerCase(),
+    )
+    if (match) setSafeLabel(match.label)
+    setExecMode('safe')
+  }, [isSafeDirect, ownerSafeAddr, proposerSafes])
+
+  const safeAddr = useMemo(() => {
+    if (isSafeDirect && ownerSafeAddr) return ownerSafeAddr
+    const addr = resolveV2SafeAddressFromLabel(proposerSafes, safeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [isSafeDirect, ownerSafeAddr, proposerSafes, safeLabel])
+  const effectiveSafeAddr = isSafeDirect ? ownerSafeAddr : safeAddr
+  const { data: safeInfo } = useSafeInfo(execMode === 'safe' || isSafeDirect ? effectiveSafeAddr : undefined)
   const isSafeOwner = Boolean(
     address && safeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
   )
@@ -115,7 +186,7 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     abi: HA_TIME_LOCK_ABI,
     functionName: 'hasRole',
     args: address && controllerAddress ? [OZ_PROPOSER_ROLE, address] : undefined,
-    query: { enabled: execMode === 'eoa' && Boolean(controllerAddress && address) },
+    query: { enabled: !isSafeDirect && execMode === 'eoa' && Boolean(controllerAddress && address) },
   })
 
   const { data: safeHasProposer } = useReadContract({
@@ -123,10 +194,12 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     abi: HA_TIME_LOCK_ABI,
     functionName: 'hasRole',
     args: safeAddr && controllerAddress ? [OZ_PROPOSER_ROLE, safeAddr] : undefined,
-    query: { enabled: execMode === 'safe' && Boolean(controllerAddress && safeAddr) },
+    query: { enabled: !isSafeDirect && execMode === 'safe' && Boolean(controllerAddress && safeAddr) },
   })
 
-  const proposeTx = useProposeSafeTransaction(execMode === 'safe' ? safeAddr : undefined)
+  const proposeTx = useProposeSafeTransaction(
+    execMode === 'safe' || isSafeDirect ? effectiveSafeAddr : undefined,
+  )
   const {
     writeContract,
     data: eoaTxHash,
@@ -195,10 +268,17 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
       : null
 
   const formValid = Boolean(callArgs && saltHex && predecessorHex && delayValid && operationId)
+  const directFormValid = Boolean(callArgs && isAddress(implAddr))
 
   const canExecuteEoa = isConnected && !isWrongChain && eoaHasProposer === true
   const canExecuteSafe = isConnected && !isWrongChain && isSafeOwner && safeHasProposer === true
-  const canExecute = execMode === 'eoa' ? canExecuteEoa : canExecuteSafe
+  const canExecuteDirectSafe =
+    isConnected && !isWrongChain && isSafeOwner && Boolean(ownerSafeAddr) && effectiveSafeAddr === ownerSafeAddr
+  const canExecute = isSafeDirect
+    ? canExecuteDirectSafe
+    : execMode === 'eoa'
+      ? canExecuteEoa
+      : canExecuteSafe
 
   function persistScheduledOp() {
     if (!operationId || !callArgs || !saltHex || !predecessorHex || delayBigInt === null) return
@@ -255,11 +335,21 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     proposeTx.mutate({ to: controllerAddress, data: encodeScheduleCalldata() })
   }
 
+  function handleDirectSafeUpgrade() {
+    if (!callArgs || !canExecuteDirectSafe) return
+    proposeTx.reset()
+    proposeTx.mutate({
+      to: callArgs.target,
+      data: callArgs.innerData,
+      value: callArgs.value.toString(),
+    })
+  }
+
   useEffect(() => {
-    if (eoaConfirmed || proposeTx.isSuccess) {
+    if (eoaConfirmed || (proposeTx.isSuccess && !isSafeDirect)) {
       persistScheduledOp()
     }
-  }, [eoaConfirmed, proposeTx.isSuccess])
+  }, [eoaConfirmed, proposeTx.isSuccess, isSafeDirect])
 
   const eoaBusy = eoaIsPending || eoaIsConfirming
   const busy = execMode === 'eoa' ? eoaBusy : proposeTx.isPending
@@ -267,11 +357,15 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
   const errored = execMode === 'eoa' ? eoaIsError : proposeTx.isError
   const activeError = execMode === 'eoa' ? eoaError?.message : proposeTx.error?.message
 
-  let btnLabel = execMode === 'eoa' ? 'Schedule' : 'Propose schedule'
+  let btnLabel = isSafeDirect
+    ? 'Propose upgrade via Safe'
+    : execMode === 'eoa'
+      ? 'Schedule'
+      : 'Propose schedule'
   let btnDisabled = false
   let btnCls = 'bg-blue-600 text-white hover:bg-blue-700'
 
-  if (!controllerAddress) {
+  if (!controllerAddress && !isSafeDirect) {
     btnLabel = 'Controller not configured'
     btnDisabled = true
     btnCls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
@@ -283,15 +377,19 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     btnLabel = 'Wrong network'
     btnDisabled = true
     btnCls = 'bg-amber-100 text-amber-600 cursor-not-allowed'
-  } else if (!formValid) {
+  } else if (!(isSafeDirect ? directFormValid : formValid)) {
     btnLabel = 'Fill required fields'
     btnDisabled = true
     btnCls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
   } else if (!canExecute) {
-    btnLabel = execMode === 'eoa' ? 'Wallet lacks PROPOSER_ROLE' : 'Safe lacks PROPOSER_ROLE'
+    btnLabel = isSafeDirect
+      ? 'Not owner of ProxyAdmin Safe'
+      : execMode === 'eoa'
+        ? 'Wallet lacks PROPOSER_ROLE'
+        : 'Safe lacks PROPOSER_ROLE'
     btnDisabled = true
     btnCls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (execMode === 'safe' && !isSafeOwner) {
+  } else if (!isSafeDirect && execMode === 'safe' && !isSafeOwner) {
     btnLabel = 'Not Safe owner'
     btnDisabled = true
     btnCls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
@@ -299,7 +397,7 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
     btnLabel = 'Confirm in wallet…'
     btnDisabled = true
   } else if (success) {
-    btnLabel = execMode === 'eoa' ? 'Scheduled' : 'Proposed'
+    btnLabel = isSafeDirect ? 'Proposed' : execMode === 'eoa' ? 'Scheduled' : 'Proposed'
     btnDisabled = true
     btnCls = 'bg-green-600 text-white cursor-not-allowed'
   } else if (errored) {
@@ -343,6 +441,9 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
               <span className="font-medium text-neutral-700 dark:text-neutral-300">
                 {upgradeMode === 'uups' ? 'UUPS' : 'Transparent'}
               </span>
+              {liveProxyMetaLoading && !proxyAdminAddress && (
+                <> · Loading ProxyAdmin…</>
+              )}
               {upgradeMode === 'transparent' && proxyAdminAddress && (
                 <>
                   {' '}
@@ -350,14 +451,41 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
                   <CopyButton value={proxyAdminAddress} />
                 </>
               )}
+              {upgradeMode === 'transparent' && proxyAdminOwner && (
+                <>
+                  {' '}
+                  · Owner: {truncateAddress(proxyAdminOwner)}
+                  <CopyButton value={proxyAdminOwner} />
+                </>
+              )}
             </p>
+          )}
+          {isSafeDirect && ownerSafeAddr && (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+              This transparent proxy uses a <strong>Safe-owned ProxyAdmin</strong> — upgrades go
+              directly through that Safe, not the timelock. Scheduling via timelock would fail at
+              execute time.
+            </div>
+          )}
+          {upgradeMode === 'transparent' && !isSafeDirect && controllerAddress && proxyAdminOwner && (
+            <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+              ProxyAdmin is owned by the timelock — schedule here, then execute after the delay on
+              the Execute Upgrade tab.
+            </div>
           )}
           {proxyAddr && !isAddress(proxyAddr) && <Hint error>Invalid address</Hint>}
         </FormField>
 
         {callArgs && upgradeMode && (
           <div className="rounded-md border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
-            {upgradeMode === 'uups' ? (
+            {isSafeDirect ? (
+              <>
+                Safe calls ProxyAdmin ({truncateAddress(callArgs.target)}) →{' '}
+                <code className="font-mono">upgradeAndCall</code>{' '}
+                on proxy {truncateAddress(proxyAddr)}
+                {initData !== '0x' && initData.length > 2 && ' (with init data)'}
+              </>
+            ) : upgradeMode === 'uups' ? (
               <>
                 Timelock target = proxy ({truncateAddress(proxyAddr)}), calls{' '}
                 <code className="font-mono">upgradeToAndCall</code>
@@ -365,10 +493,9 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
             ) : (
               <>
                 Timelock target = ProxyAdmin ({truncateAddress(callArgs.target)}), calls{' '}
-                <code className="font-mono">
-                  {initData !== '0x' && initData.length > 2 ? 'upgradeAndCall' : 'upgrade'}
-                </code>{' '}
+                <code className="font-mono">upgradeAndCall</code>{' '}
                 on proxy {truncateAddress(proxyAddr)}
+                {initData !== '0x' && initData.length > 2 && ' (with init data)'}
               </>
             )}
           </div>
@@ -400,6 +527,8 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
           </FormField>
         </div>
 
+        {!isSafeDirect && (
+        <>
         <div className="border-t border-neutral-100 pt-5 dark:border-neutral-800">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <FormField id={`${uid}-delay`} label={`Delay (seconds) — min: ${minDelaySeconds}s`}>
@@ -458,15 +587,21 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
             </p>
           </div>
         )}
+        </>
+        )}
       </div>
 
       <div className="border-t border-neutral-100 pt-6 dark:border-neutral-800">
-        <p className="mb-2 text-sm text-neutral-600 dark:text-neutral-400">Execute as</p>
+        <p className="mb-2 text-sm text-neutral-600 dark:text-neutral-400">
+          {isSafeDirect ? 'Propose as' : 'Execute as'}
+        </p>
         <div className="flex flex-wrap gap-4">
+          {!isSafeDirect && (
           <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
             <input
               type="radio"
               name={`${uid}-exec-mode`}
+              value="eoa"
               checked={execMode === 'eoa'}
               onChange={() => {
                 setExecMode('eoa')
@@ -475,11 +610,13 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
             />
             Connected wallet (EOA)
           </label>
+          )}
           <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
             <input
               type="radio"
               name={`${uid}-exec-mode`}
-              checked={execMode === 'safe'}
+              value="safe"
+              checked={execMode === 'safe' || isSafeDirect}
               onChange={() => {
                 setExecMode('safe')
                 resetTx()
@@ -488,34 +625,42 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
             Safe (propose)
           </label>
         </div>
-        {execMode === 'eoa' && address && (
+        {!isSafeDirect && execMode === 'eoa' && address && (
           <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
             Caller: {truncateAddress(address)}
             {eoaHasProposer === false && ' — wallet does not hold PROPOSER_ROLE'}
             {eoaHasProposer === true && ' — wallet holds PROPOSER_ROLE'}
           </p>
         )}
-        {execMode === 'safe' && proposerSafes.length > 0 && (
+        {(execMode === 'safe' || isSafeDirect) && (isSafeDirect ? ownerSafeAddr : proposerSafes.length > 0) && (
           <div className="mt-2">
+            {isSafeDirect && ownerSafeAddr ? (
+              <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                ProxyAdmin owner Safe: {truncateAddress(ownerSafeAddr)}
+                <CopyButton value={ownerSafeAddr} />
+              </p>
+            ) : (
             <select
-              value={safeAddress}
+              value={safeLabel}
               onChange={(e) => {
-                setSafeAddress(e.target.value)
+                setSafeLabel(e.target.value)
                 resetTx()
               }}
               className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
             >
               {proposerSafes.map((s) => (
-                <option key={s.address} value={s.address}>
+                <option key={s.label} value={s.label}>
                   {s.label} ({truncateAddress(s.address)})
                 </option>
               ))}
             </select>
-            {safeAddr && (
+            )}
+            {effectiveSafeAddr && (
               <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                 {isSafeOwner ? 'You are a Safe owner' : 'You are not an owner of this Safe'}
-                {safeHasProposer === false && ' — Safe lacks PROPOSER_ROLE'}
-                {safeHasProposer === true && ' — Safe holds PROPOSER_ROLE'}
+                {!isSafeDirect && safeHasProposer === false && ' — Safe lacks PROPOSER_ROLE'}
+                {!isSafeDirect && safeHasProposer === true && ' — Safe holds PROPOSER_ROLE'}
+                {isSafeDirect && isSafeOwner && ' — can propose ProxyAdmin.upgrade'}
               </p>
             )}
           </div>
@@ -530,11 +675,16 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
       {isConnected && isWrongChain && (
         <p className="text-xs text-amber-600 dark:text-amber-400">Switch to HyperEVM (chain 999).</p>
       )}
-      {formValid && !canExecute && isConnected && !isWrongChain && (
+      {formValid && !canExecute && isConnected && !isWrongChain && !isSafeDirect && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
           {execMode === 'eoa'
             ? 'Connected wallet does not hold PROPOSER_ROLE — switch to Safe (propose) or connect a proposer wallet.'
             : 'You are not an owner of the selected Safe, or the Safe lacks PROPOSER_ROLE.'}
+        </p>
+      )}
+      {isSafeDirect && directFormValid && !canExecute && isConnected && !isWrongChain && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Connect as an owner of the ProxyAdmin Safe ({ownerSafeAddr ? truncateAddress(ownerSafeAddr) : '…'}).
         </p>
       )}
 
@@ -548,15 +698,21 @@ export default function ScheduleV2Tab({ data, proposerSafes }: Props) {
           </span>
         )}
 
-        {proposeTx.isSuccess && execMode === 'safe' && (
-          <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
+        {proposeTx.isSuccess && (execMode === 'safe' || isSafeDirect) && (
+          <Link href={safeTransactionsHref(vaultConfig.slug)} className="text-xs text-blue-600 hover:underline dark:text-blue-400">
             View pending Safe txs →
           </Link>
         )}
 
         <div className="ml-auto">
           <button
-            onClick={execMode === 'eoa' ? handleScheduleEoa : handleScheduleSafe}
+            onClick={
+              isSafeDirect
+                ? handleDirectSafeUpgrade
+                : execMode === 'eoa'
+                  ? handleScheduleEoa
+                  : handleScheduleSafe
+            }
             disabled={btnDisabled}
             className={`rounded-md px-5 py-2 text-sm font-medium transition-colors ${btnCls}`}
           >

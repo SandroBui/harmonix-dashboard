@@ -8,6 +8,7 @@ import {
 import { getPublicClient } from './client'
 import { fetchAssetMetadataForAddresses } from './asset-metadata'
 import { getFundContractAddress } from './nav-contract-targets'
+import { readVaultSettingV2 } from './vault-setting-v2'
 import type { VaultGroupConfig } from './vault-group-config'
 
 // ─── Serialisable output types (no bigints) ───────────────────────────────────
@@ -96,16 +97,6 @@ type NavSnapshot = {
 
 const WAD = 10n ** 18n
 
-type VaultSettingV2 = {
-  minimumSupply: bigint
-  capacity: bigint
-  performanceFeeRate: bigint
-  managementFeeRate: bigint
-  managementFeeReceiver: `0x${string}`
-  performanceFeeReceiver: `0x${string}`
-  networkCost: bigint
-}
-
 type VaultStateV2 = {
   pricePerShare: bigint
   withdrawPoolAmount: bigint
@@ -137,16 +128,6 @@ async function getNavPageDataV2(config: VaultGroupConfig): Promise<NavPageData> 
   const { haVaultReaderAddress } = config
   const vaultArg = fundContractAddress
 
-  const defaultSetting: VaultSettingV2 = {
-    minimumSupply: 0n,
-    capacity: 0n,
-    performanceFeeRate: 0n,
-    managementFeeRate: 0n,
-    managementFeeReceiver: ZERO_ADDRESS as `0x${string}`,
-    performanceFeeReceiver: ZERO_ADDRESS as `0x${string}`,
-    networkCost: 0n,
-  }
-
   const defaultState: VaultStateV2 = {
     pricePerShare: 0n,
     withdrawPoolAmount: 0n,
@@ -160,16 +141,7 @@ async function getNavPageDataV2(config: VaultGroupConfig): Promise<NavPageData> 
   }
 
   const [vaultSetting, vaultState, mgmtFeePreview, perfFeeAmount, totalSupply] = await Promise.all([
-    readContractSafe(
-      publicClient,
-      {
-        address: haVaultReaderAddress,
-        abi: HA_VAULT_READER_V2_ABI,
-        functionName: 'getVaultSetting',
-        args: [vaultArg],
-      },
-      defaultSetting,
-    ),
+    readVaultSettingV2(publicClient, haVaultReaderAddress, vaultArg),
     readContractSafe(
       publicClient,
       {

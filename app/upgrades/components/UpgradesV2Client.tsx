@@ -7,7 +7,7 @@ import { getAddress } from 'viem'
 import { HA_TIME_LOCK_ABI } from '@/lib/abis'
 import { truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
-import { getDefaultSafeAddress } from '@/lib/safe/roles'
+import { buildV2SafeDropdownOptions, resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { OZ_PROPOSER_ROLE } from '@/lib/oz-timelock-roles'
 import { getUpgradesV2PageData, getUpgradesV2ShellData, resolveKnownContracts } from '@/lib/upgrades-v2-reader'
 import { readStoredUpgradeOps, storedIds } from '@/lib/upgrades-v2-storage'
@@ -34,22 +34,7 @@ function formatDuration(seconds: string): string {
 }
 
 function buildSafeOptions(config: ReturnType<typeof useVaultConfig>) {
-  const seen = new Set<string>()
-  const out: { label: string; address: string }[] = []
-  const candidates: { label: string; address?: `0x${string}` }[] = [
-    { label: 'Timelock Proposer Safe', address: config.safe.timelockProposer },
-    { label: 'Admin Safe', address: config.safe.admin },
-    { label: 'Operator Safe', address: config.safe.operator },
-    { label: 'Default Safe', address: config.safe.default },
-  ]
-  for (const { label, address } of candidates) {
-    const resolved = address ?? getDefaultSafeAddress(config)
-    const lower = resolved.toLowerCase()
-    if (seen.has(lower) || lower === '0x0000000000000000000000000000000000000000') continue
-    seen.add(lower)
-    out.push({ label, address: resolved })
-  }
-  return out
+  return buildV2SafeDropdownOptions(config, { includeTimelockProposer: true })
 }
 
 function OperationsLoadingPanel() {
@@ -80,7 +65,8 @@ export default function UpgradesV2Client() {
   const { data: resolvedContracts } = useQuery({
     queryKey: ['upgrades-v2-contracts', vaultConfig.slug],
     queryFn: () => resolveKnownContracts(vaultConfig),
-    staleTime: Infinity,
+    staleTime: 30_000,
+    refetchOnMount: 'always',
   })
 
   const controllerAddress = vaultConfig.timelockControllerAddress

@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, decodeErrorResult, getAddress, isAddress } from 'viem'
 import { HA_TIME_LOCK_ABI } from '@/lib/abis'
+import { PROXY_ADMIN_ABI } from '@/lib/abis/proxy-admin'
+import { readProxyAdminOwner } from '@/lib/proxy-admin'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
 import { getPublicClient } from '@/lib/client'
 import { V2_ENCODED_ROLE_HASHES, V2_ENCODED_ROLE_LABELS } from '@/lib/v2-role-hashes'
@@ -13,7 +15,11 @@ import { truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import type { UpgradesV2PageData, UpgradeV2Operation } from '@/lib/upgrades-v2-reader'
 import { formatDecodedUpgradeLabel } from '@/lib/upgrade-v2-calldata'
+import { OZ_CANCELLER_ROLE, OZ_PROPOSER_ROLE } from '@/lib/oz-timelock-roles'
+import { removeStoredUpgradeOp } from '@/lib/upgrades-v2-storage'
+import { resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { useVaultConfig } from '@/lib/vault-context'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 
 const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000'
 
@@ -226,9 +232,7 @@ function OperationRow({
         </div>
       )}
 
-      {op.state === 'Ready' && (
-        <ExecuteButtons op={op} data={data} executorSafes={executorSafes} />
-      )}
+      <OperationActions op={op} data={data} executorSafes={executorSafes} />
     </div>
   )
 }
@@ -253,6 +257,92 @@ const ACCESS_CONTROL_ERRORS = [
   },
 ]
 
+const UPGRADE_INNER_ERRORS = [
+  { type: 'error' as const, name: 'FailedInnerCall', inputs: [] },
+  {
+    type: 'error' as const,
+    name: 'ERC1967InvalidImplementation',
+    inputs: [{ name: 'implementation', type: 'address' }],
+  },
+] as const
+
+const FAILED_INNER_CALL_SELECTOR = '0x1425ea42'
+
+function isFailedInnerCallError(e: unknown): boolean {
+  const err = e as { shortMessage?: string; cause?: { shortMessage?: string; data?: string } }
+  const text = [err.shortMessage, err.cause?.shortMessage].filter(Boolean).join(' ')
+  if (text.includes(FAILED_INNER_CALL_SELECTOR) || text.includes('FailedInnerCall')) return true
+  const raw = err.cause?.data
+  if (raw?.startsWith(FAILED_INNER_CALL_SELECTOR)) return true
+  return false
+}
+
+async function diagnoseInnerUpgradeRevert(
+  op: UpgradeV2Operation,
+  timelockAddress: `0x${string}`,
+): Promise<string | null> {
+  const decoded = op.decoded
+  if (decoded && 'proxyAdmin' in decoded) {
+    try {
+      const owner = await readProxyAdminOwner(decoded.proxyAdmin)
+      if (owner.toLowerCase() !== timelockAddress.toLowerCase()) {
+        return `ProxyAdmin ${truncateAddress(decoded.proxyAdmin)} is owned by ${truncateAddress(owner)}, not the timelock. Timelock execute cannot authorize ProxyAdmin.upgrade — cancel this operation and upgrade via Schedule (Safe Direct) for Balance Contract, or transfer ProxyAdmin ownership to the timelock in Admin → Roles.`
+      }
+    } catch {
+      // continue with inner simulation
+    }
+  }
+
+  if (!decoded || decoded.method === 'upgradeToAndCall') {
+    return 'Timelock execute reverted inside the scheduled call (FailedInnerCall). Cancel this operation and re-schedule, or verify the target calldata on-chain.'
+  }
+
+  const client = getPublicClient()
+  const implLabel = truncateAddress(decoded.newImplementation)
+
+  try {
+    if (decoded.method === 'upgrade') {
+      await client.simulateContract({
+        address: decoded.proxyAdmin,
+        abi: PROXY_ADMIN_ABI,
+        functionName: 'upgradeAndCall',
+        args: [decoded.proxy, decoded.newImplementation, '0x'],
+        account: timelockAddress,
+      })
+    } else if (decoded.method === 'upgradeAndCall') {
+      await client.simulateContract({
+        address: decoded.proxyAdmin,
+        abi: PROXY_ADMIN_ABI,
+        functionName: 'upgradeAndCall',
+        args: [decoded.proxy, decoded.newImplementation, decoded.initData],
+        account: timelockAddress,
+        value: BigInt(op.value),
+      })
+    }
+    return 'Timelock execute reverted (FailedInnerCall) but the inner upgrade simulation passed — retry or inspect the operation salt/predecessor.'
+  } catch (inner) {
+    const innerErr = inner as { cause?: { data?: `0x${string}` }; shortMessage?: string }
+    const raw = innerErr.cause?.data
+    if (raw) {
+      try {
+        const decodedErr = decodeErrorResult({ abi: UPGRADE_INNER_ERRORS, data: raw })
+        if (decodedErr.errorName === 'ERC1967InvalidImplementation') {
+          const impl = decodedErr.args[0] as `0x${string}`
+          return `ProxyAdmin upgrade rejected implementation ${truncateAddress(impl)} (ERC1967InvalidImplementation). Cancel this operation and re-schedule with a valid implementation contract.`
+        }
+      } catch {
+        // fall through
+      }
+    }
+    const proxyLabel =
+      'proxy' in decoded ? truncateAddress(decoded.proxy) : truncateAddress(op.target)
+    if (decoded.method === 'upgrade') {
+      return `This operation calls ProxyAdmin.upgrade() but transparent proxies (Perp NAV, Balance) require ProxyAdmin.upgradeAndCall() even when init data is 0x. Cancel this operation and re-schedule — the dashboard now schedules upgradeAndCall automatically.`
+    }
+    return `ProxyAdmin.${decoded.method} reverted for proxy ${proxyLabel} → impl ${implLabel}. The scheduled implementation is likely invalid or incompatible. Use Cancel via Safe (PROPOSER/CANCELLER role) and re-schedule with the correct implementation.`
+  }
+}
+
 function formatSimulateError(e: unknown): string {
   const err = e as {
     shortMessage?: string
@@ -276,11 +366,38 @@ function formatSimulateError(e: unknown): string {
     } catch {
       // fall through
     }
+    try {
+      const decoded = decodeErrorResult({ abi: UPGRADE_INNER_ERRORS, data: raw })
+      if (decoded.errorName === 'FailedInnerCall') {
+        return 'Timelock execute reverted: inner call failed (FailedInnerCall).'
+      }
+    } catch {
+      // fall through
+    }
   }
-  return err.cause?.shortMessage ?? err.shortMessage ?? 'Simulation failed'
+  const fallback = err.cause?.shortMessage ?? err.shortMessage ?? 'Simulation failed'
+  if (fallback.includes(FAILED_INNER_CALL_SELECTOR)) {
+    return 'Timelock execute reverted: inner call failed (FailedInnerCall).'
+  }
+  return fallback
 }
 
-function ExecuteButtons({
+function formatTimelockCancelRoles(
+  hasProposer: boolean | undefined,
+  hasCanceller: boolean | undefined,
+): string {
+  if (hasProposer === undefined && hasCanceller === undefined) return ''
+  if (hasProposer || hasCanceller) {
+    const roles = [
+      hasProposer && 'PROPOSER_ROLE',
+      hasCanceller && 'CANCELLER_ROLE',
+    ].filter(Boolean)
+    return ` · ${roles.join(' / ')}: yes`
+  }
+  return ' · lacks PROPOSER_ROLE / CANCELLER_ROLE on timelock'
+}
+
+function OperationActions({
   op,
   data,
   executorSafes,
@@ -289,39 +406,107 @@ function ExecuteButtons({
   data: UpgradesV2PageData
   executorSafes: { label: string; address: string }[]
 }) {
-  const uid = `exec-${op.id.slice(2, 10)}`
+  const uid = `act-${op.id.slice(2, 10)}`
   const { isConnected, chainId, address } = useAccount()
   const vaultConfig = useVaultConfig()
   const queryClient = useQueryClient()
   const controllerAddress = data.controllerAddress!
 
-  const [execMode, setExecMode] = useState<ExecMode>('eoa')
-  const [safeAddress, setSafeAddress] = useState(executorSafes[0]?.address ?? '')
+  const [execMode, setExecMode] = useState<ExecMode>('safe')
+  const [safeLabel, setSafeLabel] = useState(executorSafes[0]?.label ?? '')
   const [simulateError, setSimulateError] = useState<string | null>(null)
 
   const isWrongChain = isConnected && chainId !== 999
-  const safeAddr =
-    safeAddress && isAddress(safeAddress) ? (getAddress(safeAddress) as `0x${string}`) : undefined
+  const safeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(executorSafes, safeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [executorSafes, safeLabel])
 
   const { data: safeInfo } = useSafeInfo(execMode === 'safe' ? safeAddr : undefined)
   const isSafeOwner = Boolean(
     address && safeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
   )
 
-  const proposeTx = useProposeSafeTransaction(execMode === 'safe' ? safeAddr : undefined)
-  const {
-    writeContract,
-    data: txHash,
-    isPending: isWritePending,
-    isSuccess: isWriteSuccess,
-    isError: isWriteError,
-    error: writeError,
-    reset: writeReset,
-  } = useWriteContract()
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash: txHash,
-    query: { enabled: Boolean(txHash) },
+  const { data: eoaHasCanceller } = useReadContract({
+    address: controllerAddress,
+    abi: HA_TIME_LOCK_ABI,
+    functionName: 'hasRole',
+    args: address ? [OZ_CANCELLER_ROLE, address] : undefined,
+    query: { enabled: execMode === 'eoa' && Boolean(address) },
   })
+
+  const { data: eoaHasProposer } = useReadContract({
+    address: controllerAddress,
+    abi: HA_TIME_LOCK_ABI,
+    functionName: 'hasRole',
+    args: address ? [OZ_PROPOSER_ROLE, address] : undefined,
+    query: { enabled: execMode === 'eoa' && Boolean(address) },
+  })
+
+  const { data: safeHasCanceller } = useReadContract({
+    address: controllerAddress,
+    abi: HA_TIME_LOCK_ABI,
+    functionName: 'hasRole',
+    args: safeAddr ? [OZ_CANCELLER_ROLE, safeAddr] : undefined,
+    query: { enabled: execMode === 'safe' && Boolean(safeAddr) },
+  })
+
+  const { data: safeHasProposer } = useReadContract({
+    address: controllerAddress,
+    abi: HA_TIME_LOCK_ABI,
+    functionName: 'hasRole',
+    args: safeAddr ? [OZ_PROPOSER_ROLE, safeAddr] : undefined,
+    query: { enabled: execMode === 'safe' && Boolean(safeAddr) },
+  })
+
+  const cancelProposeTx = useProposeSafeTransaction(execMode === 'safe' ? safeAddr : undefined)
+  const executeProposeTx = useProposeSafeTransaction(execMode === 'safe' ? safeAddr : undefined)
+
+  const {
+    writeContract: writeCancel,
+    data: cancelTxHash,
+    isPending: isCancelWritePending,
+    isSuccess: isCancelWriteSuccess,
+    isError: isCancelWriteError,
+    error: cancelWriteError,
+    reset: cancelWriteReset,
+  } = useWriteContract()
+  const { isLoading: isCancelConfirming, isSuccess: isCancelConfirmed } =
+    useWaitForTransactionReceipt({
+      hash: cancelTxHash,
+      query: { enabled: Boolean(cancelTxHash) },
+    })
+
+  const {
+    writeContract: writeExecute,
+    data: executeTxHash,
+    isPending: isExecuteWritePending,
+    isSuccess: isExecuteWriteSuccess,
+    isError: isExecuteWriteError,
+    error: executeWriteError,
+    reset: executeWriteReset,
+  } = useWriteContract()
+  const { isLoading: isExecuteConfirming, isSuccess: isExecuteConfirmed } =
+    useWaitForTransactionReceipt({
+      hash: executeTxHash,
+      query: { enabled: Boolean(executeTxHash) },
+    })
+
+  function resetMutations() {
+    setSimulateError(null)
+    cancelWriteReset()
+    executeWriteReset()
+    cancelProposeTx.reset()
+    executeProposeTx.reset()
+  }
+
+  function encodeCancelData(): `0x${string}` {
+    return encodeFunctionData({
+      abi: HA_TIME_LOCK_ABI,
+      functionName: 'cancel',
+      args: [op.id],
+    })
+  }
 
   function executeArgs(): readonly [`0x${string}`, bigint, `0x${string}`, `0x${string}`, `0x${string}`] {
     return [
@@ -341,7 +526,7 @@ function ExecuteButtons({
     })
   }
 
-  async function simulateExecute(account: `0x${string}`): Promise<string | null> {
+  async function simulateExecute(caller: `0x${string}`): Promise<string | null> {
     try {
       const client = getPublicClient()
       await client.simulateContract({
@@ -349,24 +534,43 @@ function ExecuteButtons({
         abi: HA_TIME_LOCK_ABI,
         functionName: 'execute',
         args: executeArgs(),
-        account,
+        account: caller,
       })
       return null
     } catch (e) {
+      if (isFailedInnerCallError(e)) {
+        return (await diagnoseInnerUpgradeRevert(op, controllerAddress)) ?? formatSimulateError(e)
+      }
       return formatSimulateError(e)
     }
   }
 
+  function handleCancelEoa() {
+    if (!address) return
+    cancelWriteReset()
+    writeCancel({
+      address: controllerAddress,
+      abi: HA_TIME_LOCK_ABI,
+      functionName: 'cancel',
+      args: [op.id],
+    })
+  }
+
+  function handleCancelSafe() {
+    cancelProposeTx.reset()
+    cancelProposeTx.mutate({ to: controllerAddress, data: encodeCancelData() })
+  }
+
   async function handleExecuteEoa() {
     if (!address) return
-    writeReset()
+    executeWriteReset()
     setSimulateError(null)
     const simErr = await simulateExecute(address as `0x${string}`)
     if (simErr) {
       setSimulateError(simErr)
       return
     }
-    writeContract({
+    writeExecute({
       address: controllerAddress,
       abi: HA_TIME_LOCK_ABI,
       functionName: 'execute',
@@ -375,66 +579,154 @@ function ExecuteButtons({
   }
 
   async function handleExecuteSafe() {
-    if (!address) return
+    if (!safeAddr) return
     setSimulateError(null)
-    const simErr = await simulateExecute(address as `0x${string}`)
+    const simErr = await simulateExecute(safeAddr)
     if (simErr) {
       setSimulateError(simErr)
       return
     }
-    proposeTx.reset()
-    proposeTx.mutate({ to: controllerAddress, data: encodeExecuteData() })
+    executeProposeTx.reset()
+    executeProposeTx.mutate({ to: controllerAddress, data: encodeExecuteData() })
   }
 
   useEffect(() => {
-    if ((isWriteSuccess && isConfirmed) || proposeTx.isSuccess) {
+    if ((isCancelWriteSuccess && isCancelConfirmed) || cancelProposeTx.isSuccess) {
+      removeStoredUpgradeOp(vaultConfig.slug, op.id)
       queryClient.invalidateQueries({ queryKey: ['upgrades-v2', vaultConfig.slug] })
     }
-  }, [isWriteSuccess, isConfirmed, proposeTx.isSuccess, queryClient, vaultConfig.slug])
+  }, [
+    isCancelWriteSuccess,
+    isCancelConfirmed,
+    cancelProposeTx.isSuccess,
+    queryClient,
+    vaultConfig.slug,
+    op.id,
+  ])
+
+  useEffect(() => {
+    if ((isExecuteWriteSuccess && isExecuteConfirmed) || executeProposeTx.isSuccess) {
+      queryClient.invalidateQueries({ queryKey: ['upgrades-v2', vaultConfig.slug] })
+    }
+  }, [
+    isExecuteWriteSuccess,
+    isExecuteConfirmed,
+    executeProposeTx.isSuccess,
+    queryClient,
+    vaultConfig.slug,
+  ])
+
+  const hasCancelRole =
+    execMode === 'eoa'
+      ? eoaHasCanceller === true || eoaHasProposer === true
+      : safeHasCanceller === true || safeHasProposer === true
+
+  const isCancelPending =
+    execMode === 'eoa' ? isCancelWritePending || isCancelConfirming : cancelProposeTx.isPending
+  const isCancelSuccess = execMode === 'eoa' ? isCancelWriteSuccess : cancelProposeTx.isSuccess
+  const isCancelError = execMode === 'eoa' ? isCancelWriteError : cancelProposeTx.isError
+  const cancelErr = execMode === 'eoa' ? cancelWriteError : cancelProposeTx.error
+
+  const isExecutePending =
+    execMode === 'eoa' ? isExecuteWritePending || isExecuteConfirming : executeProposeTx.isPending
+  const isExecuteSuccess = execMode === 'eoa' ? isExecuteWriteSuccess : executeProposeTx.isSuccess
+  const isExecuteError = execMode === 'eoa' ? isExecuteWriteError : executeProposeTx.isError
+  const executeErr = simulateError ?? (execMode === 'eoa' ? executeWriteError : executeProposeTx.error)
 
   const canEoa = isConnected && !isWrongChain
   const canSafe = isConnected && !isWrongChain && isSafeOwner && Boolean(safeAddr)
+  const isReady = op.state === 'Ready'
 
-  const isPending = execMode === 'eoa' ? isWritePending || isConfirming : proposeTx.isPending
-  const isSuccess = execMode === 'eoa' ? isWriteSuccess : proposeTx.isSuccess
-  const isError = execMode === 'eoa' ? isWriteError : proposeTx.isError
-  const err = simulateError ?? (execMode === 'eoa' ? writeError : proposeTx.error)
-
-  let label = execMode === 'eoa' ? 'Execute' : 'Execute via Safe'
-  let disabled = false
-  let cls = 'bg-blue-600 text-white hover:bg-blue-700'
+  let cancelLabel = execMode === 'eoa' ? 'Cancel upgrade' : 'Cancel via Safe'
+  let cancelDisabled = false
+  let cancelCls =
+    'border border-red-300 bg-white text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-neutral-900 dark:text-red-400 dark:hover:bg-red-900/20'
 
   if (!isConnected) {
-    label = 'Connect wallet'
-    disabled = true
-    cls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+    cancelLabel = 'Connect wallet'
+    cancelDisabled = true
+    cancelCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500 border-transparent'
   } else if (isWrongChain) {
-    label = 'Wrong network'
-    disabled = true
-    cls = 'bg-amber-100 text-amber-600 cursor-not-allowed'
-  } else if (execMode === 'eoa' && !canEoa) {
-    label = 'Connect wallet'
-    disabled = true
-    cls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+    cancelLabel = 'Wrong network'
+    cancelDisabled = true
+    cancelCls = 'bg-amber-100 text-amber-600 cursor-not-allowed border-transparent'
   } else if (execMode === 'safe' && !isSafeOwner) {
-    label = 'Not Safe owner'
-    disabled = true
-    cls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (execMode === 'safe' && !canSafe) {
-    label = 'Select Safe'
-    disabled = true
-    cls = 'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
-  } else if (isPending) {
-    label = 'Confirm…'
-    disabled = true
-  } else if (isSuccess) {
-    label = execMode === 'eoa' ? 'Executed' : 'Proposed'
-    disabled = true
-    cls = 'bg-green-600 text-white cursor-not-allowed'
-  } else if (isError || simulateError) {
-    label = 'Retry'
-    cls = 'bg-red-600 text-white hover:bg-red-700'
+    cancelLabel = 'Not Safe owner'
+    cancelDisabled = true
+    cancelCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500 border-transparent'
+  } else if (execMode === 'safe' && !safeAddr) {
+    cancelLabel = 'Select Safe'
+    cancelDisabled = true
+    cancelCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500 border-transparent'
+  } else if (!hasCancelRole) {
+    cancelLabel = 'No cancel role'
+    cancelDisabled = true
+    cancelCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500 border-transparent'
+  } else if (isCancelPending) {
+    cancelLabel = 'Confirm…'
+    cancelDisabled = true
+    cancelCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500 border-transparent'
+  } else if (isCancelSuccess) {
+    cancelLabel = execMode === 'eoa' ? 'Cancelled' : 'Proposed'
+    cancelDisabled = true
+    cancelCls = 'bg-green-600 text-white cursor-not-allowed border-transparent'
+  } else if (isCancelError) {
+    cancelLabel = 'Retry cancel'
+    cancelCls = 'bg-red-600 text-white hover:bg-red-700 border-transparent'
   }
+
+  let executeLabel = execMode === 'eoa' ? 'Execute' : 'Execute via Safe'
+  let executeDisabled = false
+  let executeCls = 'bg-blue-600 text-white hover:bg-blue-700'
+
+  if (!isReady) {
+    executeLabel = 'Waiting for delay'
+    executeDisabled = true
+    executeCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (!isConnected) {
+    executeLabel = 'Connect wallet'
+    executeDisabled = true
+    executeCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (isWrongChain) {
+    executeLabel = 'Wrong network'
+    executeDisabled = true
+    executeCls = 'bg-amber-100 text-amber-600 cursor-not-allowed'
+  } else if (execMode === 'eoa' && !canEoa) {
+    executeLabel = 'Connect wallet'
+    executeDisabled = true
+    executeCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (execMode === 'safe' && !isSafeOwner) {
+    executeLabel = 'Not Safe owner'
+    executeDisabled = true
+    executeCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (execMode === 'safe' && !canSafe) {
+    executeLabel = 'Select Safe'
+    executeDisabled = true
+    executeCls =
+      'bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500'
+  } else if (isExecutePending) {
+    executeLabel = 'Confirm…'
+    executeDisabled = true
+  } else if (isExecuteSuccess) {
+    executeLabel = execMode === 'eoa' ? 'Executed' : 'Proposed'
+    executeDisabled = true
+    executeCls = 'bg-green-600 text-white cursor-not-allowed'
+  } else if (isExecuteError || simulateError) {
+    executeLabel = 'Retry execute'
+    executeCls = 'bg-red-600 text-white hover:bg-red-700'
+  }
+
+  const showSafeProposedLink =
+    execMode === 'safe' && (cancelProposeTx.isSuccess || executeProposeTx.isSuccess)
 
   return (
     <div className="border-t border-neutral-200 bg-white p-5 sm:p-6 dark:border-neutral-700 dark:bg-neutral-900">
@@ -443,13 +735,12 @@ function ExecuteButtons({
         <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
           <input
             type="radio"
-            name={`${uid}-exec-mode`}
+            name={`${uid}-mode`}
+            value="eoa"
             checked={execMode === 'eoa'}
             onChange={() => {
               setExecMode('eoa')
-              setSimulateError(null)
-              writeReset()
-              proposeTx.reset()
+              resetMutations()
             }}
           />
           Connected wallet (EOA)
@@ -457,35 +748,37 @@ function ExecuteButtons({
         <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
           <input
             type="radio"
-            name={`${uid}-exec-mode`}
+            name={`${uid}-mode`}
+            value="safe"
             checked={execMode === 'safe'}
             onChange={() => {
               setExecMode('safe')
-              setSimulateError(null)
-              writeReset()
-              proposeTx.reset()
+              resetMutations()
             }}
           />
           Safe (propose)
         </label>
       </div>
+
       {execMode === 'eoa' && address && (
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
           Caller: {truncateAddress(address)}
+          {formatTimelockCancelRoles(eoaHasProposer, eoaHasCanceller)}
         </p>
       )}
+
       {execMode === 'safe' && executorSafes.length > 0 && (
         <div className="mt-2">
           <select
-            value={safeAddress}
+            value={safeLabel}
             onChange={(e) => {
-              setSafeAddress(e.target.value)
-              proposeTx.reset()
+              setSafeLabel(e.target.value)
+              resetMutations()
             }}
             className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
           >
             {executorSafes.map((s) => (
-              <option key={s.address} value={s.address}>
+              <option key={s.label} value={s.label}>
                 {s.label} ({truncateAddress(s.address)})
               </option>
             ))}
@@ -493,6 +786,7 @@ function ExecuteButtons({
           {safeAddr && (
             <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
               {isSafeOwner ? 'You are a Safe owner' : 'You are not an owner of this Safe'}
+              {formatTimelockCancelRoles(safeHasProposer, safeHasCanceller)}
             </p>
           )}
         </div>
@@ -500,7 +794,7 @@ function ExecuteButtons({
 
       {!isConnected && (
         <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-          Connect wallet to execute this upgrade.
+          Connect wallet to cancel or execute this upgrade.
         </p>
       )}
       {isConnected && isWrongChain && (
@@ -509,29 +803,52 @@ function ExecuteButtons({
         </p>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        {(isError || simulateError) && err && (
-          <span
-            className="max-w-md truncate text-xs text-red-600 dark:text-red-400 cursor-help"
-            title={typeof err === 'string' ? err : err.message}
+      {(isCancelError && cancelErr) || (isExecuteError && executeErr) ? (
+        <div className="mt-4 space-y-1">
+          {isCancelError && cancelErr && (
+            <p
+              className="text-xs text-red-600 dark:text-red-400"
+              title={cancelErr.message}
+            >
+              Cancel: {cancelErr.message}
+            </p>
+          )}
+          {(isExecuteError || simulateError) && executeErr && (
+            <p
+              className="text-xs text-red-600 dark:text-red-400"
+              title={typeof executeErr === 'string' ? executeErr : executeErr.message}
+            >
+              Execute: {typeof executeErr === 'string' ? executeErr : executeErr.message}
+            </p>
+          )}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+        {showSafeProposedLink && (
+          <Link
+            href={safeTransactionsHref(vaultConfig.slug)}
+            className="mr-auto text-xs text-blue-600 hover:underline dark:text-blue-400"
           >
-            {typeof err === 'string' ? err : err.message}
-          </span>
-        )}
-        {proposeTx.isSuccess && execMode === 'safe' && (
-          <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
             View pending Safe txs →
           </Link>
         )}
-        <div className="ml-auto">
-          <button
-            onClick={execMode === 'eoa' ? handleExecuteEoa : handleExecuteSafe}
-            disabled={disabled}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${cls}`}
-          >
-            {label}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={execMode === 'eoa' ? handleCancelEoa : handleCancelSafe}
+          disabled={cancelDisabled}
+          className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${cancelCls}`}
+        >
+          {cancelLabel}
+        </button>
+        <button
+          type="button"
+          onClick={execMode === 'eoa' ? handleExecuteEoa : handleExecuteSafe}
+          disabled={executeDisabled}
+          className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${executeCls}`}
+        >
+          {executeLabel}
+        </button>
       </div>
     </div>
   )

@@ -1,20 +1,48 @@
 import { decodeAbiParameters, encodeFunctionData, getAddress, isAddress } from 'viem'
 import { PROXY_ADMIN_ABI } from './abis/proxy-admin'
-import { readProxyAdminAddress } from './proxy-admin'
+import { readProxyAdminAddress, readProxyAdminOwner } from './proxy-admin'
 import {
   getBalanceContractAddress,
   getFundContractAddress,
   getPerpNavContractAddress,
 } from './nav-contract-targets'
+import { getFundContractReaderAddress, getFundAdminManagerAddress } from './vault-contract-reader'
 import type { VaultGroupConfig } from './vault-group-config'
 
 export type UpgradeMode = 'uups' | 'transparent'
+
+/** How a proxy upgrade is delivered on-chain */
+export type UpgradeDelivery = 'timelock' | 'safe-direct'
 
 export type KnownContract = {
   name: string
   address: `0x${string}`
   upgradeMode: UpgradeMode
   proxyAdminAddress?: `0x${string}`
+  /** Ownable owner of ProxyAdmin — only set for transparent proxies */
+  proxyAdminOwner?: `0x${string}`
+}
+
+const TRANSPARENT_SHELL_NAMES = new Set([
+  'Balance Contract',
+  'Perp NAV Contract',
+  'Fund Contract Reader',
+  'Fund Admin Manager',
+])
+
+/** Transparent proxies that use ProxyAdmin.upgradeAndCall (never UUPS upgradeToAndCall on proxy). */
+const PERP_NAV_STYLE_UPGRADE_NAMES = new Set(['Fund Admin Manager'])
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+export function resolveUpgradeDelivery(
+  entry: Pick<KnownContract, 'upgradeMode' | 'proxyAdminOwner'>,
+  timelockAddress: `0x${string}` | null | undefined,
+): UpgradeDelivery {
+  if (entry.upgradeMode === 'uups') return 'timelock'
+  if (!entry.proxyAdminOwner || !timelockAddress) return 'timelock'
+  if (entry.proxyAdminOwner.toLowerCase() === timelockAddress.toLowerCase()) return 'timelock'
+  return 'safe-direct'
 }
 
 const UUPS_ABI = [
@@ -72,12 +100,52 @@ export type UpgradeScheduleArgs = {
 
 export async function resolveProxyUpgradeMode(
   proxyAddress: `0x${string}`,
+  config?: VaultGroupConfig,
 ): Promise<{ upgradeMode: UpgradeMode; proxyAdminAddress?: `0x${string}` }> {
   const proxyAdminAddress = await readProxyAdminAddress(proxyAddress)
   if (proxyAdminAddress) {
     return { upgradeMode: 'transparent', proxyAdminAddress }
   }
+
+  if (config?.version === 2) {
+    try {
+      const fundAdminManager = getFundAdminManagerAddress(config)
+      if (fundAdminManager.toLowerCase() === proxyAddress.toLowerCase()) {
+        const overrideAdmin = config.fundAdminManagerProxyAdminAddress
+        if (overrideAdmin && overrideAdmin.toLowerCase() !== ZERO_ADDRESS) {
+          return {
+            upgradeMode: 'transparent',
+            proxyAdminAddress: getAddress(overrideAdmin) as `0x${string}`,
+          }
+        }
+        // Perp NAV-style: ProxyAdmin.upgradeAndCall via timelock or Safe-owned ProxyAdmin
+        return { upgradeMode: 'transparent' }
+      }
+    } catch {
+      // not configured for v2
+    }
+  }
+
   return { upgradeMode: 'uups' }
+}
+
+async function resolveUpgradeMetaForContract(
+  name: string,
+  address: `0x${string}`,
+  config: VaultGroupConfig,
+): Promise<{ upgradeMode: UpgradeMode; proxyAdminAddress?: `0x${string}` }> {
+  const detected = await resolveProxyUpgradeMode(address, config)
+  if (PERP_NAV_STYLE_UPGRADE_NAMES.has(name) && detected.upgradeMode === 'uups') {
+    const overrideAdmin = config.fundAdminManagerProxyAdminAddress
+    if (overrideAdmin && overrideAdmin.toLowerCase() !== ZERO_ADDRESS) {
+      return {
+        upgradeMode: 'transparent',
+        proxyAdminAddress: getAddress(overrideAdmin) as `0x${string}`,
+      }
+    }
+    return { upgradeMode: 'transparent' }
+  }
+  return detected
 }
 
 export function buildUpgradeScheduleArgs(opts: {
@@ -88,7 +156,6 @@ export function buildUpgradeScheduleArgs(opts: {
   initData: `0x${string}`
 }): UpgradeScheduleArgs | null {
   const { proxy, upgradeMode, proxyAdminAddress, newImplementation, initData } = opts
-  const hasInit = initData !== '0x' && initData.length > 2
 
   if (upgradeMode === 'uups') {
     return {
@@ -106,28 +173,15 @@ export function buildUpgradeScheduleArgs(opts: {
 
   if (!proxyAdminAddress) return null
 
-  if (hasInit) {
-    return {
-      target: proxyAdminAddress,
-      value: 0n,
-      innerData: encodeFunctionData({
-        abi: PROXY_ADMIN_ABI,
-        functionName: 'upgradeAndCall',
-        args: [proxy, newImplementation, initData],
-      }),
-      upgradeMode: 'transparent',
-      proxy,
-      proxyAdminAddress,
-    }
-  }
-
+  // Harmonix transparent proxies revert on ProxyAdmin.upgrade(); always use upgradeAndCall.
+  const initCalldata = initData === '0x' || initData.length <= 2 ? ('0x' as `0x${string}`) : initData
   return {
     target: proxyAdminAddress,
     value: 0n,
     innerData: encodeFunctionData({
       abi: PROXY_ADMIN_ABI,
-      functionName: 'upgrade',
-      args: [proxy, newImplementation],
+      functionName: 'upgradeAndCall',
+      args: [proxy, newImplementation, initCalldata],
     }),
     upgradeMode: 'transparent',
     proxy,
@@ -245,6 +299,14 @@ const UPGRADE_TARGET_CONTRACTS: {
     name: 'Perp NAV Contract',
     resolve: (config) => getPerpNavContractAddress(config) ?? '0x0000000000000000000000000000000000000000',
   },
+  {
+    name: 'Fund Contract Reader',
+    resolve: (config) => getFundContractReaderAddress(config),
+  },
+  {
+    name: 'Fund Admin Manager',
+    resolve: (config) => getFundAdminManagerAddress(config),
+  },
 ]
 
 export async function resolveKnownContracts(config: VaultGroupConfig): Promise<KnownContract[]> {
@@ -259,12 +321,21 @@ export async function resolveKnownContracts(config: VaultGroupConfig): Promise<K
   return Promise.all(
     candidates.map(async ({ name, resolve }) => {
       const address = resolve(config)
-      const { upgradeMode, proxyAdminAddress } = await resolveProxyUpgradeMode(address)
+      const { upgradeMode, proxyAdminAddress } = await resolveUpgradeMetaForContract(
+        name,
+        address,
+        config,
+      )
+      const proxyAdminOwner =
+        upgradeMode === 'transparent' && proxyAdminAddress
+          ? await readProxyAdminOwner(proxyAdminAddress)
+          : undefined
       return {
         name,
         address,
         upgradeMode,
         proxyAdminAddress,
+        proxyAdminOwner,
       }
     }),
   )
@@ -276,11 +347,11 @@ export function buildKnownContractsShell(config: VaultGroupConfig): KnownContrac
     .map(({ name, resolve }) => ({
       name,
       address: resolve(config),
-      upgradeMode: 'uups' as UpgradeMode,
+      upgradeMode: TRANSPARENT_SHELL_NAMES.has(name) ? ('transparent' as UpgradeMode) : ('uups' as UpgradeMode),
     }))
   const perpNav = getPerpNavContractAddress(config)
   if (perpNav) {
-    out.push({ name: 'Perp NAV Contract', address: perpNav, upgradeMode: 'uups' })
+    out.push({ name: 'Perp NAV Contract', address: perpNav, upgradeMode: 'transparent' })
   }
   return out
 }

@@ -1,14 +1,20 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { encodeFunctionData, getAddress, isAddress } from 'viem'
 import { OWNABLE_ABI } from '@/lib/abis'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
 import { truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
+import { useVaultConfig } from '@/lib/vault-context'
+import { getTimelockControllerAddress } from '@/lib/nav-contract-targets'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 import type { RolesV2ProxyAdminEntry, RolesV2SafeOption } from '@/lib/roles-v2-reader'
+import { buildProxyAdminEntries } from '@/lib/roles-v2-reader'
+import { resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 
 type Props = {
   proxyAdmins: RolesV2ProxyAdminEntry[]
@@ -22,15 +28,34 @@ function truncate(addr: string) {
 }
 
 export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props) {
+  const vaultConfig = useVaultConfig()
   const { address, isConnected, chainId } = useAccount()
   const isWrongChain = isConnected && chainId !== 999
 
+  const { data: proxyAdminEntries = proxyAdmins } = useQuery({
+    queryKey: ['roles-v2-proxy-admins', vaultConfig.slug],
+    queryFn: () => buildProxyAdminEntries(vaultConfig),
+    initialData: proxyAdmins,
+    staleTime: 30_000,
+  })
+
+  const timelockAddress =
+    vaultConfig.version === 2
+      ? (() => {
+          try {
+            return getTimelockControllerAddress(vaultConfig)
+          } catch {
+            return null
+          }
+        })()
+      : null
+
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [newOwnerInput, setNewOwnerInput] = useState('')
-  const [execMode, setExecMode] = useState<ExecMode>('eoa')
-  const [ownerSafeAddress, setOwnerSafeAddress] = useState('')
+  const [execMode, setExecMode] = useState<ExecMode>('safe')
+  const [ownerSafeLabel, setOwnerSafeLabel] = useState(safes[0]?.label ?? '')
 
-  const selected = proxyAdmins[selectedIndex]
+  const selected = proxyAdminEntries[selectedIndex]
   const proxyAdminAddress = selected
     ? (getAddress(selected.proxyAdminAddress) as `0x${string}`)
     : undefined
@@ -58,10 +83,10 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
     currentOwner && safes.some((s) => s.address.toLowerCase() === currentOwner.toLowerCase()),
   )
 
-  const ownerSafeAddr =
-    ownerSafeAddress && isAddress(ownerSafeAddress)
-      ? (getAddress(ownerSafeAddress) as `0x${string}`)
-      : undefined
+  const ownerSafeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(safes, ownerSafeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [safes, ownerSafeLabel])
   const { data: ownerSafeInfo } = useSafeInfo(execMode === 'safe' ? ownerSafeAddr : undefined)
   const isOwnerSafeSigner = Boolean(
     address && ownerSafeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
@@ -86,7 +111,7 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
   useEffect(() => {
     if (!currentOwner) return
     const match = safes.find((s) => s.address.toLowerCase() === currentOwner.toLowerCase())
-    if (match) setOwnerSafeAddress(match.address)
+    if (match) setOwnerSafeLabel(match.label)
   }, [currentOwner, safes])
 
   useEffect(() => {
@@ -152,7 +177,13 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
     proposeTx.mutate({ to: proxyAdminAddress, data })
   }
 
-  if (proxyAdmins.length === 0) {
+  useEffect(() => {
+    if (selectedIndex >= proxyAdminEntries.length) {
+      setSelectedIndex(0)
+    }
+  }, [proxyAdminEntries.length, selectedIndex])
+
+  if (proxyAdminEntries.length === 0) {
     return (
       <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900">
         <h2 className="mb-2 text-lg font-semibold text-neutral-900 dark:text-white">
@@ -216,8 +247,8 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
             }}
             className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
           >
-            {proxyAdmins.map((entry, i) => (
-              <option key={entry.proxyAdminAddress} value={i}>
+            {proxyAdminEntries.map((entry, i) => (
+              <option key={`${entry.label}-${entry.proxyAddress}`} value={i}>
                 {entry.label}
               </option>
             ))}
@@ -263,21 +294,18 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
               New owner must differ from current owner
             </p>
           )}
-          {safes.length > 0 && (
+          {timelockAddress && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {safes.map((s) => (
-                <button
-                  key={s.address}
-                  type="button"
-                  onClick={() => {
-                    setNewOwnerInput(s.address)
-                    resetTx()
-                  }}
-                  className="rounded border border-neutral-200 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                >
-                  Use {s.label}
-                </button>
-              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setNewOwnerInput(timelockAddress)
+                  resetTx()
+                }}
+                className="rounded border border-neutral-200 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              >
+                use default timelock
+              </button>
             </div>
           )}
         </div>
@@ -322,15 +350,15 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
         {execMode === 'safe' && (
           <div className="mt-2">
             <select
-              value={ownerSafeAddress}
+              value={ownerSafeLabel}
               onChange={(e) => {
-                setOwnerSafeAddress(e.target.value)
+                setOwnerSafeLabel(e.target.value)
                 resetTx()
               }}
               className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
             >
               {safes.map((s) => (
-                <option key={s.address} value={s.address}>
+                <option key={s.label} value={s.label}>
                   {s.label} ({truncate(s.address)})
                 </option>
               ))}
@@ -368,7 +396,7 @@ export default function TransferProxyAdminSection({ proxyAdmins, safes }: Props)
           </span>
         )}
         {proposeTx.isSuccess && execMode === 'safe' && (
-          <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
+          <Link href={safeTransactionsHref(vaultConfig.slug)} className="text-xs text-blue-600 hover:underline dark:text-blue-400">
             View pending →
           </Link>
         )}

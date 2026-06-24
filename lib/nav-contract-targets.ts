@@ -55,3 +55,12 @@ export function getTimelockControllerAddress(config: VaultGroupConfig): `0x${str
     'timelockControllerAddress',
   )
 }
+
+/** v2: fund admin manager for vault setting updates. */
+export function getFundAdminManagerAddress(config: VaultGroupConfig): `0x${string}` {
+  return requireV2Address(
+    config,
+    config.fundAdminManagerContractAddress,
+    'fundAdminManagerContractAddress',
+  )
+}

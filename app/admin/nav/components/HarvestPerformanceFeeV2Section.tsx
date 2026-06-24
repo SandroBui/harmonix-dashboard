@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import { formatDenomination, formatTokenAmount, formatV2FeeRatePercent, truncateAddress } from '@/lib/format'
 import type { NavPageData } from '@/lib/nav-reader'
 
@@ -38,10 +39,11 @@ type ActionProps = {
 type Props = {
   data: NavPageData
   stepNumber: number
+  executeAs?: ReactNode
   action: ActionProps
 }
 
-export default function HarvestPerformanceFeeV2Section({ data, stepNumber, action }: Props) {
+export default function HarvestPerformanceFeeV2Section({ data, stepNumber, executeAs, action }: Props) {
   const feeReceiver = data.performanceFeeReceiver ?? data.feeReceiver
   const feeReceiverIsZero = feeReceiver === ZERO_ADDRESS
 
@@ -150,8 +152,10 @@ export default function HarvestPerformanceFeeV2Section({ data, stepNumber, actio
       <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
         Mints performance-fee shares against gains above the watermark. Requires{' '}
         <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">ADMIN</code> on the fund
-        contract (EOA or Safe proposal via Execute as above).
+        contract (EOA or Safe proposal via Execute as below).
       </p>
+
+      {executeAs}
 
       <div className="flex flex-wrap items-center gap-3">
         {action.error && (

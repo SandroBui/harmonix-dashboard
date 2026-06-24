@@ -63,7 +63,7 @@ export default function TimelockClient() {
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-700 dark:bg-neutral-800/50">
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <div>
-            <span className="text-neutral-500 dark:text-neutral-400">Admin Safe: </span>
+            <span className="text-neutral-500 dark:text-neutral-400">Safe: </span>
             <span className="font-mono text-neutral-900 dark:text-white">
               {safeAddress && safeAddress !== '0x' ? truncateAddress(safeAddress) : '—'}
             </span>

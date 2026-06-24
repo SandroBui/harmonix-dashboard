@@ -7,11 +7,14 @@ import { encodeFunctionData, getAddress, isAddress } from 'viem'
 import type { Abi } from 'viem'
 import {
   BALANCE_CONTRACT_ABI,
+  FUND_ADMIN_MANAGER_ABI,
   FUND_CONTRACT_ABI,
+  HA_VAULT_READER_V2_ABI,
   PERP_NAV_CONTRACT_ABI,
 } from '@/lib/abis'
 import { getPublicClient } from '@/lib/client'
 import { useProposeSafeTransaction, useSafeInfo } from '@/lib/safe/hooks'
+import { resolveV2SafeAddressFromLabel } from '@/lib/safe/v2-safes'
 import { truncateAddress } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import {
@@ -21,6 +24,8 @@ import {
   type V2EncodedRoleKey,
 } from '@/lib/v2-role-hashes'
 import type { RolesV2ContractKey, RolesV2PageData } from '@/lib/roles-v2-reader'
+import { useVaultConfig } from '@/lib/vault-context'
+import { safeTransactionsHref } from '@/lib/resolve-vault'
 import TransferProxyAdminSection from './TransferProxyAdminSection'
 
 type Props = { data: RolesV2PageData }
@@ -32,6 +37,8 @@ const CONTRACT_ABIS: Record<RolesV2ContractKey, Abi> = {
   fund: FUND_CONTRACT_ABI,
   balance: BALANCE_CONTRACT_ABI,
   perpNav: PERP_NAV_CONTRACT_ABI,
+  fundContractReader: HA_VAULT_READER_V2_ABI,
+  fundAdminManager: FUND_ADMIN_MANAGER_ABI,
 }
 
 function truncate(addr: string) {
@@ -96,6 +103,7 @@ function buildButtonState(
 }
 
 export default function RolesV2Client({ data }: Props) {
+  const vaultConfig = useVaultConfig()
   const { address, isConnected, chainId } = useAccount()
   const isWrongChain = isConnected && chainId !== 999
 
@@ -106,8 +114,8 @@ export default function RolesV2Client({ data }: Props) {
   const availableRoleKeys = useMemo(() => roleKeysForContract(contractKey), [contractKey])
   const [roleKey, setRoleKey] = useState<V2EncodedRoleKey>(availableRoleKeys[0])
   const [accountInput, setAccountInput] = useState('')
-  const [execMode, setExecMode] = useState<ExecMode>('eoa')
-  const [safeAddress, setSafeAddress] = useState(data.safes[0]?.address ?? '')
+  const [execMode, setExecMode] = useState<ExecMode>('safe')
+  const [safeLabel, setSafeLabel] = useState(data.safes[0]?.label ?? '')
   const [lastEoaAction, setLastEoaAction] = useState<RoleAction | null>(null)
   const [grantSimError, setGrantSimError] = useState<string | null>(null)
   const [revokeSimError, setRevokeSimError] = useState<string | null>(null)
@@ -126,8 +134,10 @@ export default function RolesV2Client({ data }: Props) {
   const accountValid = accountTrimmed !== '' && isAddress(accountTrimmed)
   const normalizedAccount = accountValid ? (getAddress(accountTrimmed) as `0x${string}`) : undefined
 
-  const safeAddr =
-    safeAddress && isAddress(safeAddress) ? (getAddress(safeAddress) as `0x${string}`) : undefined
+  const safeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(data.safes, safeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [data.safes, safeLabel])
   const { data: safeInfo } = useSafeInfo(execMode === 'safe' ? safeAddr : undefined)
   const isSafeOwner = Boolean(
     address && safeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
@@ -367,9 +377,11 @@ export default function RolesV2Client({ data }: Props) {
         <div className="mb-4 rounded-md border border-neutral-100 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
           <p className="font-medium text-neutral-700 dark:text-neutral-300">Roles per contract</p>
           <ul className="mt-1 space-y-0.5">
-            <li>Fund — ADMIN, UPGRADER</li>
+            <li>Fund — ADMIN, UPGRADER, PAUSE</li>
             <li>Balance — ADMIN, OPERATOR</li>
             <li>Perp NAV — ADMIN</li>
+            <li>Fund Contract Reader — ADMIN</li>
+            <li>Fund Admin Manager — ADMIN</li>
           </ul>
         </div>
 
@@ -437,6 +449,20 @@ export default function RolesV2Client({ data }: Props) {
             }}
             className="w-full max-w-xl rounded-md border border-neutral-200 bg-white px-3 py-2 font-mono text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white dark:placeholder:text-neutral-500"
           />
+          {vaultConfig.safe.default && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountInput(vaultConfig.safe.default)
+                  resetTxState()
+                }}
+                className="rounded border border-neutral-200 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              >
+                Use Default Safe
+              </button>
+            </div>
+          )}
           {accountTrimmed && !accountValid && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">Invalid address</p>
           )}
@@ -493,15 +519,15 @@ export default function RolesV2Client({ data }: Props) {
           {execMode === 'safe' && (
             <div className="mt-2">
               <select
-                value={safeAddress}
+                value={safeLabel}
                 onChange={(e) => {
-                  setSafeAddress(e.target.value)
+                  setSafeLabel(e.target.value)
                   resetTxState()
                 }}
                 className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
               >
                 {data.safes.map((s) => (
-                  <option key={s.address} value={s.address}>
+                  <option key={s.label} value={s.label}>
                     {s.label} ({truncate(s.address)})
                   </option>
                 ))}
@@ -562,7 +588,7 @@ export default function RolesV2Client({ data }: Props) {
           )}
 
           {(grantProposeTx.isSuccess || revokeProposeTx.isSuccess) && execMode === 'safe' && (
-            <Link href="/safe-transactions" className="text-xs text-blue-600 hover:underline dark:text-blue-400">
+            <Link href={safeTransactionsHref(vaultConfig.slug)} className="text-xs text-blue-600 hover:underline dark:text-blue-400">
               View pending →
             </Link>
           )}
