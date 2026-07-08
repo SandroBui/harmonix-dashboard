@@ -246,9 +246,26 @@ export async function getUpgradesPageData(config: VaultGroupConfig): Promise<Upg
   )
   const controllerAddress = controllerResult?.type === 'Contract' ? controllerResult.address : null
 
-  // Step 3: resolve executor (first member of UPGRADE_EXECUTOR_ROLE)
+  // Step 3: resolve executor (first member of UPGRADE_EXECUTOR_ROLE).
+  // The HaTimelockController authorizes execute() against its OWN AccessManager
+  // (controller.accessManager()), which can differ from the vault's AccessManager.
+  // Resolve the executor role on that manager so the UI surfaces the correct
+  // executor Safe/EOA and the Execute-via-Safe flow proposes to the right Safe.
+  let executorAccessManager = accessManagerAddress
+  if (controllerAddress) {
+    try {
+      executorAccessManager = await publicClient.readContract({
+        address: controllerAddress,
+        abi: HA_TIMELOCK_CONTROLLER_ABI,
+        functionName: 'accessManager',
+      }) as `0x${string}`
+    } catch {
+      // Older controllers may not expose accessManager() — fall back to the vault AccessManager.
+      executorAccessManager = accessManagerAddress
+    }
+  }
   const executorResult = await resolveRoleContractAddress(
-    accessManagerAddress,
+    executorAccessManager,
     ROLE_HASHES.upgrade_executor,
   )
 

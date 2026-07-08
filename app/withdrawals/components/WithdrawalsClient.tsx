@@ -6,10 +6,15 @@ import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { useFulfillmentStatus } from '@/lib/hooks/use-fulfillment-status'
 import { useRoleCheck } from '@/lib/safe/hooks'
 import type { SafeInfo } from '@/lib/safe/types'
+import { useVaultConfig } from '@/lib/vault-context'
+import { supportsCurrentVaultUI } from '@/lib/vault-version'
 import FilterBar, { StatusFilter, AssetOption } from './FilterBar'
 import FulfillPanel from './FulfillPanel'
 import CancelPanel from './CancelPanel'
+import RedeemPanel from './RedeemPanel'
 import type { Withdrawal } from '@/lib/vault-reader'
+
+type ActionMode = 'fulfill' | 'cancel' | 'redeem'
 
 type WindowMeta = {
   totalQueueLength: string
@@ -217,6 +222,8 @@ function WithdrawalRow({
 
 export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillmentSeconds, windowMeta }: Props) {
   const router = useRouter()
+  const config = useVaultConfig()
+  const isVaultV3 = supportsCurrentVaultUI(config)
   const { data: assetMetadata } = useAssetMetadata()
 
   // Fetch Safe info for the operator role
@@ -228,7 +235,7 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
   const [controller, setController] = useState('')
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set())
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [mode, setMode] = useState<'fulfill' | 'cancel'>('fulfill')
+  const [mode, setMode] = useState<ActionMode>('fulfill')
   const [rows, setRows] = useState<Withdrawal[]>(withdrawals)
   const [meta, setMeta] = useState<WindowMeta>(windowMeta)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -325,6 +332,11 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
     setSelectedIds(new Set())
   }, [mode])
 
+  // Redeem mode is v3-only and requires the operator role — reset otherwise
+  useEffect(() => {
+    if ((!isVaultV3 || !operatorHasRole) && mode === 'redeem') setMode('fulfill')
+  }, [isVaultV3, operatorHasRole, mode])
+
   // The vault all selected rows must belong to (locked once first row is picked)
   const lockedVault = useMemo(() => {
     if (selectedIds.size === 0) return null
@@ -333,7 +345,8 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
 
   function isSelectable(w: Withdrawal): boolean {
     if (BigInt(w.shares) === 0n) return false
-    if (mode === 'fulfill' && w.isFulfilled) return false
+    if ((mode === 'fulfill' || mode === 'cancel') && w.isFulfilled) return false
+    if (mode === 'redeem' && (!isVaultV3 || !w.isFulfilled)) return false
     if (lockedVault && w.vault !== lockedVault) return false
     return true
   }
@@ -427,7 +440,27 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
         >
           Cancel
         </button>
+        {isVaultV3 && operatorHasRole && (
+          <button
+            onClick={() => setMode('redeem')}
+            className={
+              mode === 'redeem'
+                ? 'rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white'
+                : 'rounded-md px-3 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800'
+            }
+          >
+            Redeem
+          </button>
+        )}
       </div>
+
+      {isVaultV3 && (
+        <p className="text-xs text-neutral-400 dark:text-neutral-500">
+          {mode === 'fulfill' && 'Fulfill: select pending rows to propose fulfillRedeem.'}
+          {mode === 'cancel' && 'Cancel: select pending rows to cancel redeem requests.'}
+          {mode === 'redeem' && 'Redeem: select fulfilled rows to redeem on behalf (payout to controller).'}
+        </p>
+      )}
 
       {/* Summary */}
       <p className="text-sm text-neutral-500 dark:text-neutral-400">
@@ -512,6 +545,15 @@ export default function WithdrawalsClient({ withdrawals, vaultAssetMap, fulfillm
       {mode === 'cancel' && (
         <CancelPanel
           selected={selectedRows}
+          safeInfo={safeInfo}
+          hasOperatorRole={operatorHasRole}
+          onSuccess={handleFulfillSuccess}
+        />
+      )}
+      {isVaultV3 && operatorHasRole && mode === 'redeem' && (
+        <RedeemPanel
+          selected={selectedRows}
+          vaultAssetMap={vaultAssetMap}
           safeInfo={safeInfo}
           hasOperatorRole={operatorHasRole}
           onSuccess={handleFulfillSuccess}

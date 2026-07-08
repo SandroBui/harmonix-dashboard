@@ -35,6 +35,15 @@ export const HA_TIMELOCK_CONTROLLER_ABI = [
     outputs: [{ type: 'bytes32' }],
     stateMutability: 'view',
   },
+  {
+    // The AccessManager this controller authorizes proposer/executor roles against.
+    // May differ from the vault's AccessManager (reader.getAccessManager()).
+    type: 'function',
+    name: 'accessManager',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+  },
 
   // ─── View ─────────────────────────────────────────────────────────────────
   {

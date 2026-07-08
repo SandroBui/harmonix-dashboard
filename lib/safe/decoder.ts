@@ -233,6 +233,11 @@ export function summarizeDecodedData(
     return `Cancel ${count} redeem request(s)`
   }
 
+  if (method === 'redeem') {
+    const controller = parameters.find((p) => p.name === 'controller')?.value ?? ''
+    return `Redeem on behalf for ${truncate(controller)}`
+  }
+
   if (method === 'transfer') {
     const recipient = parameters.find((p) => p.name === 'to')
     const amount = parameters.find((p) => p.name === 'amount' || p.name === 'value')

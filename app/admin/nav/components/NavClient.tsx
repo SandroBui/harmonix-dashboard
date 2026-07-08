@@ -13,7 +13,7 @@ import HarvestManagementFeeSection from './HarvestManagementFeeSection'
 import HarvestPerformanceFeeSection from './HarvestPerformanceFeeSection'
 import AssetNavBreakdown from './AssetNavBreakdown'
 
-const AUTO_REFRESH_MS = 60_000
+const AUTO_REFRESH_MS = 3 * 60_000
 
 export default function NavClient({ data }: { data: NavPageData }) {
   const config = useVaultConfig()
@@ -68,7 +68,7 @@ export default function NavClient({ data }: { data: NavPageData }) {
           )}
           {isPending ? 'Updating…' : `Updated ${secondsAgo}s ago`}
           <span className="text-neutral-300 dark:text-neutral-600">·</span>
-          auto-refresh every {AUTO_REFRESH_MS / 1_000}s
+          auto-refresh every {AUTO_REFRESH_MS / 60_000}m
         </span>
         <button
           onClick={() => startTransition(() => router.refresh())}

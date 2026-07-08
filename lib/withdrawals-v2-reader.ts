@@ -80,9 +80,9 @@ const MULTISEND_ABI = [
 
 export function parseWithdrawalsDaysParam(days: string | null | undefined): number {
   if (days === 'all') return 0
-  const n = Number(days ?? 30)
+  const n = Number(days ?? 15)
   if (n === 7 || n === 15 || n === 30 || n === 90) return n
-  return 30
+  return 15
 }
 
 type DecodedInit = {
@@ -449,7 +449,7 @@ export async function getWithdrawalsV2(
   opts: { days?: number } = {},
 ): Promise<WithdrawalsV2Data> {
   const toTimestamp = Math.floor(Date.now() / 1000)
-  const days = opts.days ?? 30
+  const days = opts.days ?? 15
   const fromTimestamp = days > 0 ? toTimestamp - days * 86400 : 0
   const fetchedAt = Date.now()
 

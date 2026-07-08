@@ -5,6 +5,7 @@ import { resolveVaultFromParams } from '@/lib/resolve-vault'
 import { supportsCurrentVaultUI } from '@/lib/vault-version'
 import VaultVersionPlaceholder from '@/app/components/VaultVersionPlaceholder'
 import RefreshButton from '../withdrawals/components/RefreshButton'
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
 import StrategyClient from './components/StrategyClient'
 import StrategiesV2Client from './components/StrategiesV2Client'
 
@@ -42,7 +43,7 @@ export default async function StrategiesPage({
       <main className="mx-auto max-w-7xl px-4 py-10">
         <div className="mb-6 flex items-start gap-3">
           <h1 className="text-2xl font-semibold text-neutral-900 dark:text-white">Strategies</h1>
-          <div className="ml-auto"><RefreshButton /></div>
+          <div className="ml-auto"><RefreshButton autoRefreshMs={V2_AUTO_REFRESH_MS} /></div>
         </div>
         <StrategiesV2Client data={v2Data} />
       </main>
