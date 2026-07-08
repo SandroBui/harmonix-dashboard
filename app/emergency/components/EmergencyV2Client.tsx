@@ -25,7 +25,8 @@ import { useVaultConfig } from '@/lib/vault-context'
 import { safeTransactionsHref } from '@/lib/resolve-vault'
 import { V2_ENCODED_ROLE_HASHES } from '@/lib/v2-role-hashes'
 
-const AUTO_REFRESH_MS = 30_000
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
+import RefreshButton from '@/app/withdrawals/components/RefreshButton'
 
 type Props = { data: EmergencyV2PageData }
 type ExecMode = 'eoa' | 'safe'
@@ -145,6 +146,7 @@ export default function EmergencyV2Client({ data }: Props) {
   )
   const [pauseStatusLoading, setPauseStatusLoading] = useState(true)
   const [pauseStatusRefreshing, setPauseStatusRefreshing] = useState(false)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const [pauseScanError, setPauseScanError] = useState<string | null>(null)
   const [simError, setSimError] = useState<string | null>(null)
   const [revertError, setRevertError] = useState<string | null>(null)
@@ -232,6 +234,7 @@ export default function EmergencyV2Client({ data }: Props) {
           return next
         })
         setPauseScanError(json.scanError)
+        setLastUpdatedAt(Date.now())
       } catch (err) {
         setPauseScanError(err instanceof Error ? err.message : 'Failed to load pause status')
       } finally {
@@ -244,14 +247,6 @@ export default function EmergencyV2Client({ data }: Props) {
 
   useEffect(() => {
     void fetchPauseStatus()
-  }, [fetchPauseStatus])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (optimisticPauseRef.current) return
-      void fetchPauseStatus({ background: true })
-    }, AUTO_REFRESH_MS)
-    return () => clearInterval(interval)
   }, [fetchPauseStatus])
 
   const safeAddr = useMemo(() => {
@@ -460,14 +455,17 @@ export default function EmergencyV2Client({ data }: Props) {
           contract. Pause state is inferred from the most recent successful{' '}
           <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">setPaused</code> transaction on HyperEVMScan.
         </p>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={pauseStatusLoading || pauseStatusRefreshing}
-          className="shrink-0 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-        >
-          {pauseStatusLoading || pauseStatusRefreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
+        <RefreshButton
+          autoRefreshMs={V2_AUTO_REFRESH_MS}
+          onRefresh={handleRefresh}
+          onAutoRefresh={() => {
+            if (optimisticPauseRef.current) return
+            void fetchPauseStatus({ background: true })
+          }}
+          isRefreshing={pauseStatusLoading || pauseStatusRefreshing}
+          lastUpdatedAt={lastUpdatedAt}
+          isLoading={pauseStatusLoading && lastUpdatedAt === null}
+        />
       </div>
 
       {pauseScanError && (

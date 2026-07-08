@@ -21,8 +21,8 @@ import { V2_ENCODED_ROLE_HASHES } from '@/lib/v2-role-hashes'
 import type { NavPageData } from '@/lib/nav-reader'
 import HarvestManagementFeeV2Section from './HarvestManagementFeeV2Section'
 import HarvestPerformanceFeeV2Section from './HarvestPerformanceFeeV2Section'
-
-const AUTO_REFRESH_MS = 60_000
+import RefreshButton from '@/app/withdrawals/components/RefreshButton'
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
 const WAD_DECIMALS = 18
 
 type Props = { data: NavPageData }
@@ -147,6 +147,72 @@ function ExecuteAsSection({
   )
 }
 
+function useBlockExecuteAs({
+  safeOptions,
+  fundContractAddress,
+  perpNavAddress,
+  adminRole,
+  walletAddress,
+  walletHasFundAdmin,
+  walletHasPerpAdmin,
+}: {
+  safeOptions: SafeOption[]
+  fundContractAddress: `0x${string}`
+  perpNavAddress?: `0x${string}`
+  adminRole: `0x${string}`
+  walletAddress?: string
+  walletHasFundAdmin?: boolean
+  walletHasPerpAdmin?: boolean
+}) {
+  const [mode, setMode] = useState<ExecMode>('safe')
+  const [safeLabel, setSafeLabel] = useState(safeOptions[0]?.label ?? '')
+
+  const safeAddr = useMemo(() => {
+    const addr = resolveV2SafeAddressFromLabel(safeOptions, safeLabel)
+    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
+  }, [safeOptions, safeLabel])
+
+  const { data: safeInfo } = useSafeInfo(mode === 'safe' ? safeAddr : undefined)
+  const isSafeOwner = Boolean(
+    walletAddress && safeInfo?.owners.some((o) => o.toLowerCase() === walletAddress.toLowerCase()),
+  )
+
+  const { data: safeHasFundAdmin } = useReadContract({
+    address: fundContractAddress,
+    abi: FUND_CONTRACT_ABI,
+    functionName: 'hasRole',
+    args: safeAddr ? [adminRole, safeAddr] : undefined,
+    query: { enabled: Boolean(safeAddr) },
+  })
+
+  const { data: safeHasPerpAdmin } = useReadContract({
+    address: perpNavAddress,
+    abi: PERP_NAV_CONTRACT_ABI,
+    functionName: 'hasRole',
+    args: safeAddr && perpNavAddress ? [adminRole, safeAddr] : undefined,
+    query: { enabled: Boolean(safeAddr && perpNavAddress) },
+  })
+
+  const canExecuteFund =
+    mode === 'eoa' ? walletHasFundAdmin === true : isSafeOwner && safeHasFundAdmin === true
+
+  const canExecutePerp =
+    mode === 'eoa' ? walletHasPerpAdmin === true : isSafeOwner && safeHasPerpAdmin === true
+
+  return {
+    mode,
+    safeLabel,
+    setMode,
+    setSafeLabel,
+    safeAddr,
+    isSafeOwner,
+    safeHasFundAdmin,
+    safeHasPerpAdmin,
+    canExecuteFund,
+    canExecutePerp,
+  }
+}
+
 function formatMetric(value: bigint | undefined, loading = false) {
   if (loading) return '…'
   if (value === undefined) return '—'
@@ -259,8 +325,7 @@ function buildActionButtonState(
 export default function NavV2Client({ data }: Props) {
   const config = useVaultConfig()
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [secondsAgo, setSecondsAgo] = useState(0)
+  const [, startTransition] = useTransition()
   const { address, isConnected, chainId } = useAccount()
 
   const fundContractAddress = getFundContractAddress(config)
@@ -268,44 +333,8 @@ export default function NavV2Client({ data }: Props) {
   const adminRole = V2_ENCODED_ROLE_HASHES.ADMIN
   const safeOptions = useMemo(() => buildV2SafeDropdownOptions(config), [config])
 
-  const [syncExecMode, setSyncExecMode] = useState<ExecMode>('safe')
-  const [fundExecMode, setFundExecMode] = useState<ExecMode>('safe')
-  const [syncSafeLabel, setSyncSafeLabel] = useState(safeOptions[0]?.label ?? '')
-  const [fundSafeLabel, setFundSafeLabel] = useState(safeOptions[0]?.label ?? '')
   const [perpDexBalanceInput, setPerpDexBalanceInput] = useState('')
   const [lastEoaAction, setLastEoaAction] = useState<NavAction | null>(null)
-
-  const perpDexBalance = useMemo(() => {
-    const trimmed = perpDexBalanceInput.trim()
-    if (!trimmed) return undefined
-    try {
-      return parseUnits(trimmed, WAD_DECIMALS)
-    } catch {
-      return undefined
-    }
-  }, [perpDexBalanceInput])
-
-  const balanceInputInvalid = perpDexBalanceInput.trim() !== '' && perpDexBalance === undefined
-  const balanceFormValid = perpDexBalance !== undefined
-
-  const syncSafeAddr = useMemo(() => {
-    const addr = resolveV2SafeAddressFromLabel(safeOptions, syncSafeLabel)
-    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
-  }, [safeOptions, syncSafeLabel])
-  const fundSafeAddr = useMemo(() => {
-    const addr = resolveV2SafeAddressFromLabel(safeOptions, fundSafeLabel)
-    return addr && isAddress(addr) ? (getAddress(addr) as `0x${string}`) : undefined
-  }, [safeOptions, fundSafeLabel])
-
-  const { data: syncSafeInfo } = useSafeInfo(syncExecMode === 'safe' ? syncSafeAddr : undefined)
-  const syncIsSafeOwner = Boolean(
-    address && syncSafeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
-  )
-
-  const { data: fundSafeInfo } = useSafeInfo(fundExecMode === 'safe' ? fundSafeAddr : undefined)
-  const fundIsSafeOwner = Boolean(
-    address && fundSafeInfo?.owners.some((o) => o.toLowerCase() === address.toLowerCase()),
-  )
 
   const { data: walletHasFundAdmin } = useReadContract({
     address: fundContractAddress,
@@ -323,37 +352,33 @@ export default function NavV2Client({ data }: Props) {
     query: { enabled: Boolean(address && perpNavAddress) },
   })
 
-  const { data: syncSafeHasFundAdmin } = useReadContract({
-    address: fundContractAddress,
-    abi: FUND_CONTRACT_ABI,
-    functionName: 'hasRole',
-    args: syncSafeAddr ? [adminRole, syncSafeAddr] : undefined,
-    query: { enabled: Boolean(syncSafeAddr) },
-  })
+  const blockExecBase = {
+    safeOptions,
+    fundContractAddress,
+    perpNavAddress,
+    adminRole,
+    walletAddress: address,
+    walletHasFundAdmin,
+    walletHasPerpAdmin,
+  }
 
-  const { data: syncSafeHasPerpAdmin } = useReadContract({
-    address: perpNavAddress,
-    abi: PERP_NAV_CONTRACT_ABI,
-    functionName: 'hasRole',
-    args: syncSafeAddr && perpNavAddress ? [adminRole, syncSafeAddr] : undefined,
-    query: { enabled: Boolean(syncSafeAddr && perpNavAddress) },
-  })
+  const syncExec = useBlockExecuteAs(blockExecBase)
+  const updateNavExec = useBlockExecuteAs(blockExecBase)
+  const harvestMgmtExec = useBlockExecuteAs(blockExecBase)
+  const harvestPerfExec = useBlockExecuteAs(blockExecBase)
 
-  const { data: fundSafeHasFundAdmin } = useReadContract({
-    address: fundContractAddress,
-    abi: FUND_CONTRACT_ABI,
-    functionName: 'hasRole',
-    args: fundSafeAddr ? [adminRole, fundSafeAddr] : undefined,
-    query: { enabled: Boolean(fundSafeAddr) },
-  })
+  const perpDexBalance = useMemo(() => {
+    const trimmed = perpDexBalanceInput.trim()
+    if (!trimmed) return undefined
+    try {
+      return parseUnits(trimmed, WAD_DECIMALS)
+    } catch {
+      return undefined
+    }
+  }, [perpDexBalanceInput])
 
-  const { data: fundSafeHasPerpAdmin } = useReadContract({
-    address: perpNavAddress,
-    abi: PERP_NAV_CONTRACT_ABI,
-    functionName: 'hasRole',
-    args: fundSafeAddr && perpNavAddress ? [adminRole, fundSafeAddr] : undefined,
-    query: { enabled: Boolean(fundSafeAddr && perpNavAddress) },
-  })
+  const balanceInputInvalid = perpDexBalanceInput.trim() !== '' && perpDexBalance === undefined
+  const balanceFormValid = perpDexBalance !== undefined
 
   const { data: currentPps, isFetching: ppsLoading } = useReadContract({
     address: fundContractAddress,
@@ -376,10 +401,10 @@ export default function NavV2Client({ data }: Props) {
     query: { enabled: perpDexBalance !== undefined },
   })
 
-  const syncProposeTx = useProposeSafeTransaction(syncSafeAddr)
-  const updateProposeTx = useProposeSafeTransaction(fundSafeAddr)
-  const harvestMgmtProposeTx = useProposeSafeTransaction(fundSafeAddr)
-  const harvestPerfProposeTx = useProposeSafeTransaction(fundSafeAddr)
+  const syncProposeTx = useProposeSafeTransaction(syncExec.safeAddr)
+  const updateProposeTx = useProposeSafeTransaction(updateNavExec.safeAddr)
+  const harvestMgmtProposeTx = useProposeSafeTransaction(harvestMgmtExec.safeAddr)
+  const harvestPerfProposeTx = useProposeSafeTransaction(harvestPerfExec.safeAddr)
 
   const {
     writeContract,
@@ -397,19 +422,6 @@ export default function NavV2Client({ data }: Props) {
   })
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      startTransition(() => router.refresh())
-    }, AUTO_REFRESH_MS)
-    return () => clearInterval(interval)
-  }, [router])
-
-  useEffect(() => {
-    setSecondsAgo(0)
-    const ticker = setInterval(() => setSecondsAgo((s) => s + 1), 1_000)
-    return () => clearInterval(ticker)
-  }, [data.fetchedAt])
-
-  useEffect(() => {
     if (eoaConfirmed) {
       startTransition(() => router.refresh())
     }
@@ -417,17 +429,10 @@ export default function NavV2Client({ data }: Props) {
 
   const isWrongChain = isConnected && chainId !== 999
 
-  const canExecuteSync =
-    syncExecMode === 'eoa'
-      ? walletHasPerpAdmin === true
-      : syncIsSafeOwner && syncSafeHasPerpAdmin === true
-
-  const canExecuteUpdate =
-    fundExecMode === 'eoa'
-      ? walletHasFundAdmin === true
-      : fundIsSafeOwner && fundSafeHasFundAdmin === true
-
-  const canExecuteHarvest = canExecuteUpdate
+  const canExecuteSync = syncExec.canExecutePerp && Boolean(perpNavAddress)
+  const canExecuteUpdate = updateNavExec.canExecuteFund
+  const canExecuteHarvestMgmt = harvestMgmtExec.canExecuteFund
+  const canExecuteHarvestPerf = harvestPerfExec.canExecuteFund
 
   function resetTxState() {
     resetEoa()
@@ -482,7 +487,7 @@ export default function NavV2Client({ data }: Props) {
     updateProposeTx.mutate({ to: fundContractAddress, data: calldata })
   }
   function handleHarvestMgmtEoa() {
-    if (!canExecuteHarvest) return
+    if (!canExecuteHarvestMgmt) return
     resetEoa()
     setLastEoaAction('harvestMgmt')
     writeContract({
@@ -493,7 +498,7 @@ export default function NavV2Client({ data }: Props) {
   }
 
   function handleHarvestMgmtSafe() {
-    if (!canExecuteHarvest) return
+    if (!canExecuteHarvestMgmt) return
     harvestMgmtProposeTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_CONTRACT_ABI,
@@ -503,7 +508,7 @@ export default function NavV2Client({ data }: Props) {
   }
 
   function handleHarvestPerfEoa() {
-    if (!canExecuteHarvest) return
+    if (!canExecuteHarvestPerf) return
     resetEoa()
     setLastEoaAction('harvestPerf')
     writeContract({
@@ -514,7 +519,7 @@ export default function NavV2Client({ data }: Props) {
   }
 
   function handleHarvestPerfSafe() {
-    if (!canExecuteHarvest) return
+    if (!canExecuteHarvestPerf) return
     harvestPerfProposeTx.reset()
     const calldata = encodeFunctionData({
       abi: FUND_CONTRACT_ABI,
@@ -534,14 +539,14 @@ export default function NavV2Client({ data }: Props) {
   const harvestMgmtEoaError = eoaIsError && lastEoaAction === 'harvestMgmt'
   const harvestPerfEoaError = eoaIsError && lastEoaAction === 'harvestPerf'
 
-  const syncBtn = buildActionButtonState(syncExecMode, 'Sync balance', 'Propose sync', '✓ Synced', {
+  const syncBtn = buildActionButtonState(syncExec.mode, 'Sync balance', 'Propose sync', '✓ Synced', {
     isConnected,
     isWrongChain,
-    canExecute: canExecuteSync && Boolean(perpNavAddress),
+    canExecute: canExecuteSync,
     formValid: balanceFormValid,
-    pending: syncExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'sync' : syncProposeTx.isPending,
-    success: syncExecMode === 'eoa' ? syncEoaSuccess : syncProposeTx.isSuccess,
-    errored: syncExecMode === 'eoa' ? syncEoaError : syncProposeTx.isError,
+    pending: syncExec.mode === 'eoa' ? eoaBusy && lastEoaAction === 'sync' : syncProposeTx.isPending,
+    success: syncExec.mode === 'eoa' ? syncEoaSuccess : syncProposeTx.isSuccess,
+    errored: syncExec.mode === 'eoa' ? syncEoaError : syncProposeTx.isError,
     invalidLabel: balanceInputInvalid ? 'Invalid balance' : undefined,
   })
 
@@ -553,119 +558,101 @@ export default function NavV2Client({ data }: Props) {
     !balanceFormValid &&
     !balanceInputInvalid
 
-  const updateBtn = buildActionButtonState(fundExecMode, 'Update NAV', 'Propose update NAV', '✓ Updated', {
+  const updateBtn = buildActionButtonState(updateNavExec.mode, 'Update NAV', 'Propose update NAV', '✓ Updated', {
     isConnected,
     isWrongChain,
     canExecute: canExecuteUpdate,
     formValid: true,
-    pending: fundExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'update' : updateProposeTx.isPending,
-    success: fundExecMode === 'eoa' ? updateEoaSuccess : updateProposeTx.isSuccess,
-    errored: fundExecMode === 'eoa' ? updateEoaError : updateProposeTx.isError,
+    pending: updateNavExec.mode === 'eoa' ? eoaBusy && lastEoaAction === 'update' : updateProposeTx.isPending,
+    success: updateNavExec.mode === 'eoa' ? updateEoaSuccess : updateProposeTx.isSuccess,
+    errored: updateNavExec.mode === 'eoa' ? updateEoaError : updateProposeTx.isError,
   })
 
   const syncError =
-    syncExecMode === 'eoa' && syncEoaError ? eoaError?.message : syncProposeTx.error?.message
+    syncExec.mode === 'eoa' && syncEoaError ? eoaError?.message : syncProposeTx.error?.message
   const updateError =
-    fundExecMode === 'eoa' && updateEoaError ? eoaError?.message : updateProposeTx.error?.message
+    updateNavExec.mode === 'eoa' && updateEoaError ? eoaError?.message : updateProposeTx.error?.message
   const harvestMgmtBtn = buildActionButtonState(
-    fundExecMode,
+    harvestMgmtExec.mode,
     'Harvest management fee',
     'Propose harvest mgmt',
     '✓ Harvested',
     {
       isConnected,
       isWrongChain,
-      canExecute: canExecuteHarvest,
+      canExecute: canExecuteHarvestMgmt,
       formValid: true,
       pending:
-        fundExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'harvestMgmt' : harvestMgmtProposeTx.isPending,
-      success: fundExecMode === 'eoa' ? harvestMgmtEoaSuccess : harvestMgmtProposeTx.isSuccess,
-      errored: fundExecMode === 'eoa' ? harvestMgmtEoaError : harvestMgmtProposeTx.isError,
+        harvestMgmtExec.mode === 'eoa'
+          ? eoaBusy && lastEoaAction === 'harvestMgmt'
+          : harvestMgmtProposeTx.isPending,
+      success: harvestMgmtExec.mode === 'eoa' ? harvestMgmtEoaSuccess : harvestMgmtProposeTx.isSuccess,
+      errored: harvestMgmtExec.mode === 'eoa' ? harvestMgmtEoaError : harvestMgmtProposeTx.isError,
     },
   )
 
   const harvestPerfBtn = buildActionButtonState(
-    fundExecMode,
+    harvestPerfExec.mode,
     'Harvest performance fee',
     'Propose harvest perf',
     '✓ Harvested',
     {
       isConnected,
       isWrongChain,
-      canExecute: canExecuteHarvest,
+      canExecute: canExecuteHarvestPerf,
       formValid: true,
       pending:
-        fundExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'harvestPerf' : harvestPerfProposeTx.isPending,
-      success: fundExecMode === 'eoa' ? harvestPerfEoaSuccess : harvestPerfProposeTx.isSuccess,
-      errored: fundExecMode === 'eoa' ? harvestPerfEoaError : harvestPerfProposeTx.isError,
+        harvestPerfExec.mode === 'eoa'
+          ? eoaBusy && lastEoaAction === 'harvestPerf'
+          : harvestPerfProposeTx.isPending,
+      success: harvestPerfExec.mode === 'eoa' ? harvestPerfEoaSuccess : harvestPerfProposeTx.isSuccess,
+      errored: harvestPerfExec.mode === 'eoa' ? harvestPerfEoaError : harvestPerfProposeTx.isError,
     },
   )
 
   const harvestMgmtError =
-    fundExecMode === 'eoa' && harvestMgmtEoaError ? eoaError?.message : harvestMgmtProposeTx.error?.message
+    harvestMgmtExec.mode === 'eoa' && harvestMgmtEoaError
+      ? eoaError?.message
+      : harvestMgmtProposeTx.error?.message
   const harvestPerfError =
-    fundExecMode === 'eoa' && harvestPerfEoaError ? eoaError?.message : harvestPerfProposeTx.error?.message
+    harvestPerfExec.mode === 'eoa' && harvestPerfEoaError
+      ? eoaError?.message
+      : harvestPerfProposeTx.error?.message
 
-  const renderFundExecuteAs = (instanceId: string) => (
+  const renderExecuteAs = (
+    instanceId: string,
+    scope: ExecuteAsScope,
+    exec: ReturnType<typeof useBlockExecuteAs>,
+  ) => (
     <ExecuteAsSection
       key={instanceId}
-      scope="fund"
+      scope={scope}
       instanceId={instanceId}
-      mode={fundExecMode}
+      mode={exec.mode}
       onModeChange={(mode) => {
-        setFundExecMode(mode)
+        exec.setMode(mode)
         resetTxState()
       }}
       walletAddress={address}
       walletHasFundAdmin={walletHasFundAdmin}
+      walletHasPerpAdmin={walletHasPerpAdmin}
       safeOptions={safeOptions}
-      safeLabel={fundSafeLabel}
-      onSafeLabelChange={setFundSafeLabel}
-      isSafeOwner={fundIsSafeOwner}
-      safeHasFundAdmin={fundSafeHasFundAdmin}
+      safeLabel={exec.safeLabel}
+      onSafeLabelChange={exec.setSafeLabel}
+      isSafeOwner={exec.isSafeOwner}
+      safeHasFundAdmin={exec.safeHasFundAdmin}
+      safeHasPerpAdmin={exec.safeHasPerpAdmin}
     />
   )
 
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-start gap-3">
         <h1 className="text-2xl font-semibold text-neutral-900 dark:text-white">NAV Management</h1>
-        <span className="flex items-center gap-1.5 text-xs text-neutral-400 dark:text-neutral-500">
-          {isPending ? (
-            <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-            </svg>
-          ) : (
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-          )}
-          {isPending ? 'Updating…' : `Updated ${secondsAgo}s ago`}
-          <span className="text-neutral-300 dark:text-neutral-600">·</span>
-          auto-refresh every {AUTO_REFRESH_MS / 1_000}s
-        </span>
-        <button
-          onClick={() => startTransition(() => router.refresh())}
-          disabled={isPending}
-          className="ml-auto flex items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={isPending ? 'animate-spin' : ''}
-          >
-            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-            <path d="M21 3v5h-5" />
-          </svg>
-          {isPending ? 'Refreshing…' : 'Refresh'}
-        </button>
+        <div className="ml-auto">
+          <RefreshButton autoRefreshMs={V2_AUTO_REFRESH_MS} lastUpdatedAt={data.fetchedAt} />
+        </div>
       </div>
 
       <div className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-700 dark:bg-neutral-900">
@@ -710,32 +697,17 @@ export default function NavV2Client({ data }: Props) {
             </p>
           )}
         </div>
-        <ExecuteAsSection
-          scope="sync"
-          instanceId="sync"
-          mode={syncExecMode}
-          onModeChange={(mode) => {
-            setSyncExecMode(mode)
-            resetTxState()
-          }}
-          walletAddress={address}
-          walletHasPerpAdmin={walletHasPerpAdmin}
-          safeOptions={safeOptions}
-          safeLabel={syncSafeLabel}
-          onSafeLabelChange={setSyncSafeLabel}
-          isSafeOwner={syncIsSafeOwner}
-          safeHasPerpAdmin={syncSafeHasPerpAdmin}
-        />
+        {renderExecuteAs('sync', 'sync', syncExec)}
         <ActionButtonRow
           label={syncBtn.label}
           disabled={syncBtn.disabled}
           btnClass={syncBtn.btnClass}
-          onClick={syncExecMode === 'eoa' ? handleSyncEoa : handleSyncSafe}
-          pending={syncExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'sync' : syncProposeTx.isPending}
+          onClick={syncExec.mode === 'eoa' ? handleSyncEoa : handleSyncSafe}
+          pending={syncExec.mode === 'eoa' ? eoaBusy && lastEoaAction === 'sync' : syncProposeTx.isPending}
           error={syncError}
-          success={syncExecMode === 'eoa' ? syncEoaSuccess : syncProposeTx.isSuccess}
+          success={syncExec.mode === 'eoa' ? syncEoaSuccess : syncProposeTx.isSuccess}
           successLink={
-            syncExecMode === 'safe' && syncProposeTx.isSuccess
+            syncExec.mode === 'safe' && syncProposeTx.isSuccess
               ? { href: safeTransactionsHref(config.slug), text: 'View pending →' }
               : undefined
           }
@@ -807,17 +779,17 @@ export default function NavV2Client({ data }: Props) {
           <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">ADMIN</code> on the
           fund contract (EOA or Safe proposal via Execute as below).
         </p>
-        {renderFundExecuteAs('update-nav')}
+        {renderExecuteAs('update-nav', 'fund', updateNavExec)}
         <ActionButtonRow
           label={updateBtn.label}
           disabled={updateBtn.disabled}
           btnClass={updateBtn.btnClass}
-          onClick={fundExecMode === 'eoa' ? handleUpdateEoa : handleUpdateSafe}
-          pending={fundExecMode === 'eoa' ? eoaBusy && lastEoaAction === 'update' : updateProposeTx.isPending}
+          onClick={updateNavExec.mode === 'eoa' ? handleUpdateEoa : handleUpdateSafe}
+          pending={updateNavExec.mode === 'eoa' ? eoaBusy && lastEoaAction === 'update' : updateProposeTx.isPending}
           error={updateError}
-          success={fundExecMode === 'eoa' ? updateEoaSuccess : updateProposeTx.isSuccess}
+          success={updateNavExec.mode === 'eoa' ? updateEoaSuccess : updateProposeTx.isSuccess}
           successLink={
-            fundExecMode === 'safe' && updateProposeTx.isSuccess
+            updateNavExec.mode === 'safe' && updateProposeTx.isSuccess
               ? { href: safeTransactionsHref(config.slug), text: 'View pending →' }
               : undefined
           }
@@ -826,20 +798,20 @@ export default function NavV2Client({ data }: Props) {
       <HarvestManagementFeeV2Section
         data={data}
         stepNumber={3}
-        executeAs={renderFundExecuteAs('harvest-mgmt')}
+        executeAs={renderExecuteAs('harvest-mgmt', 'fund', harvestMgmtExec)}
         action={{
           label: harvestMgmtBtn.label,
           disabled: harvestMgmtBtn.disabled,
           btnClass: harvestMgmtBtn.btnClass,
-          onClick: fundExecMode === 'eoa' ? handleHarvestMgmtEoa : handleHarvestMgmtSafe,
+          onClick: harvestMgmtExec.mode === 'eoa' ? handleHarvestMgmtEoa : handleHarvestMgmtSafe,
           pending:
-            fundExecMode === 'eoa'
+            harvestMgmtExec.mode === 'eoa'
               ? eoaBusy && lastEoaAction === 'harvestMgmt'
               : harvestMgmtProposeTx.isPending,
           error: harvestMgmtError,
-          success: fundExecMode === 'eoa' ? harvestMgmtEoaSuccess : harvestMgmtProposeTx.isSuccess,
+          success: harvestMgmtExec.mode === 'eoa' ? harvestMgmtEoaSuccess : harvestMgmtProposeTx.isSuccess,
           successLink:
-            fundExecMode === 'safe' && harvestMgmtProposeTx.isSuccess
+            harvestMgmtExec.mode === 'safe' && harvestMgmtProposeTx.isSuccess
               ? { href: safeTransactionsHref(config.slug), text: 'View pending →' }
               : undefined,
         }}
@@ -848,20 +820,20 @@ export default function NavV2Client({ data }: Props) {
       <HarvestPerformanceFeeV2Section
         data={data}
         stepNumber={4}
-        executeAs={renderFundExecuteAs('harvest-perf')}
+        executeAs={renderExecuteAs('harvest-perf', 'fund', harvestPerfExec)}
         action={{
           label: harvestPerfBtn.label,
           disabled: harvestPerfBtn.disabled,
           btnClass: harvestPerfBtn.btnClass,
-          onClick: fundExecMode === 'eoa' ? handleHarvestPerfEoa : handleHarvestPerfSafe,
+          onClick: harvestPerfExec.mode === 'eoa' ? handleHarvestPerfEoa : handleHarvestPerfSafe,
           pending:
-            fundExecMode === 'eoa'
+            harvestPerfExec.mode === 'eoa'
               ? eoaBusy && lastEoaAction === 'harvestPerf'
               : harvestPerfProposeTx.isPending,
           error: harvestPerfError,
-          success: fundExecMode === 'eoa' ? harvestPerfEoaSuccess : harvestPerfProposeTx.isSuccess,
+          success: harvestPerfExec.mode === 'eoa' ? harvestPerfEoaSuccess : harvestPerfProposeTx.isSuccess,
           successLink:
-            fundExecMode === 'safe' && harvestPerfProposeTx.isSuccess
+            harvestPerfExec.mode === 'safe' && harvestPerfProposeTx.isSuccess
               ? { href: safeTransactionsHref(config.slug), text: 'View pending →' }
               : undefined,
         }}

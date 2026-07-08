@@ -15,6 +15,7 @@ import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI, VAULT_ASSET_ABI } from '@/lib/
 import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
 
 const SAFE_ON_CHAIN_ABI = [
   {
@@ -520,8 +521,7 @@ export function useV2PendingSafeTransactions(vaultAssetMap?: Record<string, stri
     },
     refetchInterval: (query) => {
       if (isRateLimitedError(query.state.error)) return 90_000
-      const hasPending = (query.state.data?.length ?? 0) > 0
-      return hasPending ? 30_000 : 60_000
+      return V2_AUTO_REFRESH_MS
     },
     staleTime: 30_000,
     enabled: entries.length > 0,

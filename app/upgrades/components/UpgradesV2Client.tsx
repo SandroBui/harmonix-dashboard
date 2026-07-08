@@ -1,6 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
+import RefreshButton from '@/app/withdrawals/components/RefreshButton'
 import { useQuery } from '@tanstack/react-query'
 import { useAccount, useReadContract } from 'wagmi'
 import { getAddress } from 'viem'
@@ -110,7 +112,6 @@ export default function UpgradesV2Client() {
       })
       return Promise.race([load, timeout])
     },
-    refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
   })
@@ -160,23 +161,18 @@ export default function UpgradesV2Client() {
             </div>
           </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-start gap-2">
             <RoleBadge label="Proposer (wallet)" active={walletHasProposer === true} />
-            <button
-              onClick={() => refetch()}
-              disabled={isFetching}
-              className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-            >
-              {isFetching ? 'Refreshing…' : 'Refresh'}
-            </button>
+            <RefreshButton
+              size="sm"
+              autoRefreshMs={V2_AUTO_REFRESH_MS}
+              onRefresh={() => refetch()}
+              isRefreshing={isFetching}
+              lastUpdatedAt={dataUpdatedAt > 0 ? dataUpdatedAt : null}
+              isLoading={operationsLoading && !operationsReady}
+            />
           </div>
         </div>
-        {dataUpdatedAt > 0 && (
-          <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
-            Operations synced: {new Date(dataUpdatedAt).toLocaleTimeString()} (auto-refresh every
-            60s)
-          </p>
-        )}
         {operationsLoading && !operationsReady && (
           <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
             Syncing pending operations in the background…

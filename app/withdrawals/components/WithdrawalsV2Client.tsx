@@ -12,6 +12,7 @@ import {
 } from '@/lib/withdrawals-v2-reader'
 import { useFulfillmentStatus } from '@/lib/hooks/use-fulfillment-status'
 import RefreshButton from './RefreshButton'
+import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
 import WithdrawalsAcquirePanel from './WithdrawalsAcquirePanel'
 
 const DAY_OPTIONS = [
@@ -365,7 +366,7 @@ export default function WithdrawalsV2Client({
           </span>
         )}
         <div className="ml-auto">
-          <RefreshButton onRefresh={handleRefresh} />
+          <RefreshButton onRefresh={handleRefresh} autoRefreshMs={V2_AUTO_REFRESH_MS} />
         </div>
       </div>
 
