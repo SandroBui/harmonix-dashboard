@@ -1,6 +1,6 @@
 import { createPublicClient, http, keccak256, toHex, getAddress } from 'viem'
 
-const RPC = 'https://hyperliquid.rpc.blxrbdn.com'
+const RPC = 'https://rpc.hyperliquid.xyz/evm'
 const CONTROLLER = getAddress('0xdD7330a1D432D3CF9b7d9Da07E8103D6Af50F839')
 const ZERO = '0x0000000000000000000000000000000000000000'
 const EXECUTOR_ROLE = keccak256(toHex('EXECUTOR_ROLE'))
