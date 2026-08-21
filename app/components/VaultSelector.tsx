@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useState, useRef, useEffect } from 'react'
+import { getNetworkName } from '@/lib/networks'
 import { VAULT_GROUPS } from '@/lib/vaults.config'
 import { useVaultConfig } from '@/lib/vault-context'
 
@@ -74,7 +75,7 @@ export default function VaultSelector() {
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+        <div className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
           <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
             Vault Groups
           </div>
@@ -97,7 +98,12 @@ export default function VaultSelector() {
                       isActive ? 'bg-violet-500' : 'bg-neutral-300 dark:bg-neutral-600'
                     }`}
                   />
-                  <span className="flex-1 truncate font-medium">{v.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{v.name}</span>
+                    <span className="block truncate text-[11px] font-normal text-neutral-400 dark:text-neutral-500">
+                      {getNetworkName(v.chainId)}
+                    </span>
+                  </span>
                   {isActive && (
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

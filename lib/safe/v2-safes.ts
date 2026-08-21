@@ -1,18 +1,12 @@
 import { getAddress, isAddress } from 'viem'
 import type { VaultGroupConfig } from '@/lib/vault-group-config'
-import { getDefaultSafeAddress, getSafeAddressForRole } from './roles'
+import { getDefaultSafeAddress } from './roles'
 import type { RoleType } from './roles'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 export type V2SafeDropdownOption = {
   label: string
-  address: `0x${string}`
-}
-
-export type V2SafeEntry = {
-  label: string
-  role: RoleType
   address: `0x${string}`
 }
 
@@ -49,33 +43,6 @@ export function resolveV2SafeAddressFromLabel(
   const addr = options.find((o) => o.label === label)?.address
   if (!addr || !isAddress(addr)) return undefined
   return getAddress(addr) as `0x${string}`
-}
-
-const V2_SAFE_CANDIDATES: { label: string; role: RoleType }[] = [
-  { label: 'Operator Safe', role: 'operator' },
-  { label: 'Admin Safe', role: 'admin' },
-  { label: 'Timelock Proposer Safe', role: 'timelock_proposer' },
-  { label: 'Default Safe', role: 'operator' },
-]
-
-/** Unique configured Safe addresses for v2 vaults (deduped by address). */
-export function getV2SafeEntries(config: VaultGroupConfig): V2SafeEntry[] {
-  const seen = new Set<string>()
-  const out: V2SafeEntry[] = []
-
-  for (const { label, role } of V2_SAFE_CANDIDATES) {
-    const address =
-      role === 'operator' && label === 'Default Safe'
-        ? getDefaultSafeAddress(config)
-        : getSafeAddressForRole(config, role)
-
-    const lower = address.toLowerCase()
-    if (seen.has(lower) || lower === ZERO_ADDRESS) continue
-    seen.add(lower)
-    out.push({ label, role, address })
-  }
-
-  return out
 }
 
 export function inferV2RoleFromMethod(method: string | undefined): RoleType | null {

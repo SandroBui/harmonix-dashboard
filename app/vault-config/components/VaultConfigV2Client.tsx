@@ -32,6 +32,7 @@ import {
   type V2FieldArgType,
   type V2UpdateFnName,
 } from '@/lib/vault-config-v2-save'
+import StrategyWalletsSection from './StrategyWalletsSection'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
@@ -664,6 +665,7 @@ export default function VaultConfigV2Client({ data }: Props) {
       </h1>
 
       <ConfigSection title="Contract Addresses" rows={addressRows} {...sectionProps} />
+      <StrategyWalletsSection />
       <ConfigSection title="Vault Config" rows={vaultConfigRows} {...sectionProps} />
       <ConfigSection title="Fee Configuration" rows={feeRows} {...sectionProps} />
 

@@ -53,7 +53,7 @@ export const ROLE_DESCRIPTIONS: Record<RoleType, string> = {
 }
 
 // Map RoleType to the SafeAddresses property name
-const ROLE_TO_SAFE_KEY: Record<RoleType, keyof SafeAddresses> = {
+const ROLE_TO_SAFE_KEY: Record<RoleType, Exclude<keyof SafeAddresses, 'strategyWallets'>> = {
   operator: 'operator',
   curator: 'curator',
   timelock_proposer: 'timelockProposer',

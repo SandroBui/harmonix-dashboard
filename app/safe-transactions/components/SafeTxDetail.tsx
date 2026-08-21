@@ -3,6 +3,8 @@
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
 import { formatTokenAmount } from '@/lib/format'
 import { useLiveNavSnapshot } from '@/lib/hooks/use-live-nav'
+import { safeTxExplorerUrl } from '@/lib/safe/chains'
+import CopyButton from '@/app/components/CopyButton'
 import DecodedCalldata from './DecodedCalldata'
 import SafeTxActions from './SafeTxActions'
 
@@ -10,6 +12,10 @@ type Props = {
   tx: PendingSafeTx
   safeInfo: SafeInfo | undefined
   safeAddress: `0x${string}`
+  /** Sign / Execute / Cancel only on Pending tab */
+  actionsEnabled?: boolean
+  /** Chain of the Safe — drives the explorer link. */
+  chainId: number
 }
 
 function truncate(addr: string): string {
@@ -31,9 +37,18 @@ function touchesNav(tx: PendingSafeTx): boolean {
   return (d.multiSendInner ?? []).some((c) => c.decoded && NAV_TOUCHING_METHODS.has(c.decoded.method))
 }
 
-export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
-  const showLiveNav = touchesNav(tx)
+export default function SafeTxDetail({
+  tx,
+  safeInfo,
+  safeAddress,
+  actionsEnabled = true,
+  chainId,
+}: Props) {
+  const showLiveNav = touchesNav(tx) && actionsEnabled
   const liveNav = useLiveNavSnapshot({ enabled: showLiveNav })
+  const toLabel = [tx.dataDecoded?.protocolName, tx.dataDecoded?.contractName]
+    .filter(Boolean)
+    .join(' - ')
 
   return (
     <div className="space-y-4 border-t border-neutral-200 px-4 py-4 dark:border-neutral-700">
@@ -108,18 +123,12 @@ export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
         <div>
           <span className="text-neutral-500">To</span>
-          <p className="mt-0.5 font-mono text-xs text-neutral-700 dark:text-neutral-300">{tx.to}</p>
-        </div>
-        <div>
-          <span className="text-neutral-500">Value</span>
-          <p className="mt-0.5 text-neutral-700 dark:text-neutral-300">
-            {tx.value === '0' ? '0 ETH' : `${Number(BigInt(tx.value)) / 1e18} ETH`}
-          </p>
-        </div>
-        <div>
-          <span className="text-neutral-500">Operation</span>
-          <p className="mt-0.5 text-neutral-700 dark:text-neutral-300">
-            {tx.operation === 0 ? 'Call' : 'DelegateCall'}
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-neutral-700 dark:text-neutral-300">
+            {toLabel && <span>{toLabel}</span>}
+            <span className="inline-flex items-center font-mono">
+              {truncate(tx.to)}
+              <CopyButton value={tx.to} />
+            </span>
           </p>
         </div>
         <div>
@@ -128,6 +137,29 @@ export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
             {new Date(tx.submissionDate).toLocaleString()}
           </p>
         </div>
+        {tx.executionDate && (
+          <div>
+            <span className="text-neutral-500">Executed</span>
+            <p className="mt-0.5 text-neutral-700 dark:text-neutral-300">
+              {new Date(tx.executionDate).toLocaleString()}
+            </p>
+          </div>
+        )}
+        {tx.transactionHash && (
+          <div>
+            <span className="text-neutral-500">Tx hash</span>
+            <p className="mt-0.5">
+              <a
+                href={safeTxExplorerUrl(chainId, tx.transactionHash) ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
+              >
+                {truncate(tx.transactionHash)}
+              </a>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Confirmation list */}
@@ -165,8 +197,10 @@ export default function SafeTxDetail({ tx, safeInfo, safeAddress }: Props) {
         <code className="font-mono">{truncate(tx.safeTxHash)}</code>
       </div>
 
-      {/* Actions */}
-      <SafeTxActions tx={tx} safeInfo={safeInfo} safeAddress={safeAddress} />
+      {/* Actions — Pending tab only */}
+      {actionsEnabled && (
+        <SafeTxActions tx={tx} safeInfo={safeInfo} safeAddress={safeAddress} />
+      )}
     </div>
   )
 }

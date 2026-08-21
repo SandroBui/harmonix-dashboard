@@ -1,6 +1,24 @@
 import { signIn } from "@/auth"
 
-export default function LoginPage() {
+function loginErrorMessage(error: string | undefined): string | null {
+  if (!error) return null
+  if (error === "Callback" || error === "AccessDenied") {
+    return "This Google account is not authorized, or the auth API rejected the sign-in."
+  }
+  if (error === "Configuration") {
+    return "Auth is not configured. Check GOOGLE_CLIENT_ID, AUTH_SECRET, and API_BASE_URL."
+  }
+  return "Sign-in failed. Try again."
+}
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>
+}) {
+  const { error } = await searchParams
+  const errorMessage = loginErrorMessage(error)
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-neutral-50 dark:bg-neutral-950">
       <div className="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
@@ -12,6 +30,14 @@ export default function LoginPage() {
             Sign in to continue
           </p>
         </div>
+        {errorMessage && (
+          <p
+            role="alert"
+            className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300"
+          >
+            {errorMessage}
+          </p>
+        )}
         <form
           action={async () => {
             "use server"

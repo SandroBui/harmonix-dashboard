@@ -1,24 +1,29 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { ROLE_LABELS } from '@/lib/safe/roles'
 import type { RoleType } from '@/lib/safe/roles'
-import type { SafeInfo } from '@/lib/safe/types'
+import type { SafeInfo, SafeTxBucket } from '@/lib/safe/types'
+import { isRejectionTx, getSafeTxBucket } from '@/lib/safe/status'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
 import { formatTokenAmount } from '@/lib/format'
 import CopyButton from '@/app/components/CopyButton'
 import type { RoleTaggedTx } from '@/lib/safe/types'
+import {
+  formatTxTime,
+  getTxDisplayDate,
+  groupTxsByDate,
+} from '@/lib/safe/date-grouping'
 import SafeTxDetail from './SafeTxDetail'
+
+export type SafeTxListMode = 'pending' | 'readonly'
 
 type Props = {
   transactions: RoleTaggedTx[]
   vaultAssetMap: Record<string, string>
-}
-
-function isRejectionTx(tx: RoleTaggedTx): boolean {
-  const hasEmptyData = !tx.data || tx.data === '0x'
-  const toSelf = tx.to.toLowerCase() === tx.safeAddress.toLowerCase()
-  return hasEmptyData && toSelf
+  mode?: SafeTxListMode
+  /** Chain of the Safe these txs belong to — drives explorer links. */
+  chainId: number
 }
 
 const ROLE_BADGE_COLORS: Record<RoleType, string> = {
@@ -29,6 +34,36 @@ const ROLE_BADGE_COLORS: Record<RoleType, string> = {
   sentinel:           'bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300',
   upgrade_executor:   'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
   upgrader:           'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+}
+
+const STATUS_BADGE: Record<SafeTxBucket, { label: string; className: string }> = {
+  pending: {
+    label: 'Pending',
+    className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  },
+  executed: {
+    label: 'Executed',
+    className: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+  },
+  failed: {
+    label: 'Failed',
+    className: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  },
+}
+
+const HISTORY_STATUS: Record<SafeTxBucket, { label: string; className: string }> = {
+  pending: {
+    label: 'Pending',
+    className: 'text-amber-600 dark:text-amber-400',
+  },
+  executed: {
+    label: 'Success',
+    className: 'text-green-600 dark:text-green-400',
+  },
+  failed: {
+    label: 'Failed',
+    className: 'text-red-600 dark:text-red-400',
+  },
 }
 
 function truncateAddress(addr: string): string {
@@ -72,127 +107,314 @@ function WarningIcon({ msg, color }: { msg: string; color: string }) {
   )
 }
 
-export default function SafeTxList({ transactions, vaultAssetMap }: Props) {
+function RowIndex({ index }: { index: number }) {
+  return (
+    <span className="w-8 shrink-0 text-sm tabular-nums text-neutral-500 dark:text-neutral-400">
+      {index}
+    </span>
+  )
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`h-4 w-4 shrink-0 text-neutral-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+    </svg>
+  )
+}
+
+type TxRowShellProps = {
+  tx: RoleTaggedTx
+  isExpanded: boolean
+  onToggle: () => void
+  borderClassName: string
+  rowClassName: string
+  children: ReactNode
+  chainId: number
+  actionsEnabled: boolean
+}
+
+function TxRowShell({
+  tx,
+  isExpanded,
+  onToggle,
+  borderClassName,
+  rowClassName,
+  children,
+  chainId,
+  actionsEnabled,
+}: TxRowShellProps) {
+  return (
+    <div
+      className={`overflow-hidden rounded-lg border bg-white dark:bg-neutral-900 ${borderClassName}`}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        }}
+        className={rowClassName}
+      >
+        {children}
+      </div>
+      {isExpanded && (
+        <SafeTxDetail
+          tx={tx}
+          safeInfo={tx.safeInfo}
+          safeAddress={tx.safeAddress}
+          actionsEnabled={actionsEnabled}
+          chainId={chainId}
+        />
+      )}
+    </div>
+  )
+}
+
+type PendingRowProps = {
+  tx: RoleTaggedTx
+  index: number
+  vaultAssetMap: Record<string, string>
+  assetMetadata: ReturnType<typeof useAssetMetadata>['data']
+  isExpanded: boolean
+  onToggle: () => void
+  chainId: number
+  actionsEnabled: boolean
+}
+
+function SafeTxPendingRow({
+  tx,
+  index,
+  vaultAssetMap,
+  assetMetadata,
+  isExpanded,
+  onToggle,
+  chainId,
+  actionsEnabled,
+}: PendingRowProps) {
+  const rejection = isRejectionTx(tx, tx.safeAddress)
+  const bucket = getSafeTxBucket(tx, tx.safeAddress)
+  const status = STATUS_BADGE[bucket]
+
+  const fulfillTokenAddr = tx.dataDecoded?.method === 'fulfillRedeem'
+    ? vaultAssetMap[tx.to.toLowerCase()]
+    : undefined
+  const fulfillAsset = fulfillTokenAddr ? assetMetadata?.[fulfillTokenAddr] : undefined
+
+  return (
+    <TxRowShell
+      tx={tx}
+      isExpanded={isExpanded}
+      onToggle={onToggle}
+      borderClassName={
+        rejection
+          ? 'border-red-200 dark:border-red-900'
+          : 'border-neutral-200 dark:border-neutral-700'
+      }
+      rowClassName="flex w-full cursor-pointer items-center gap-4 px-5 py-5 text-left transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-neutral-800"
+      chainId={chainId}
+      actionsEnabled={actionsEnabled}
+    >
+      <RowIndex index={index} />
+      <div className="min-w-0 flex-1 space-y-2">
+        {rejection ? (
+          <p className="truncate text-base font-semibold text-red-600 dark:text-red-400">
+            Cancellation of tx #{tx.nonce}
+          </p>
+        ) : (
+          <p className="truncate text-base font-semibold text-neutral-900 dark:text-white">
+            {tx.summary}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${status.className}`}
+          >
+            {status.label}
+          </span>
+          {tx.roles.map((role) => (
+            <span
+              key={role}
+              className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[role]}`}
+            >
+              {ROLE_LABELS[role]}
+            </span>
+          ))}
+          {fulfillAsset && (
+            <span className="inline-flex items-center rounded-md bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:bg-teal-900/40 dark:text-teal-300">
+              {fulfillAsset.symbol}
+            </span>
+          )}
+          {tx.fulfillPrecheck && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              FundVault: {formatTokenAmount(tx.fulfillPrecheck.fundVaultBalance, tx.fulfillPrecheck.decimals, 4)} {tx.fulfillPrecheck.symbol}
+            </span>
+          )}
+          {tx.fulfillPrecheck?.isInsufficient && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+              <WarningIcon
+                color="text-red-500"
+                msg={`Insufficient FundVault balance. Short by ${formatTokenAmount(tx.fulfillPrecheck.shortfall, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol} (requires ${formatTokenAmount(tx.fulfillPrecheck.requiredAmount, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol}, has ${formatTokenAmount(tx.fulfillPrecheck.fundVaultBalance, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol}).`}
+              />
+              Insufficient FundVault
+            </span>
+          )}
+          <SafeMetaBadge safeAddress={tx.safeAddress} safeInfo={tx.safeInfo} />
+          {tx.executionDate && (
+            <span className="text-xs text-neutral-400 dark:text-neutral-500">
+              {new Date(tx.executionDate).toLocaleString()}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <span
+        className={`shrink-0 text-sm font-semibold ${
+          tx.isExecutable
+            ? 'text-green-600 dark:text-green-400'
+            : 'text-amber-600 dark:text-amber-400'
+        }`}
+      >
+        {tx.confirmationsCount}/{tx.confirmationsRequired}
+        {tx.isExecutable ? ' ✓ Ready' : ' signed'}
+      </span>
+
+      <ChevronIcon expanded={isExpanded} />
+    </TxRowShell>
+  )
+}
+
+type HistoryRowProps = {
+  tx: RoleTaggedTx
+  index: number
+  isExpanded: boolean
+  onToggle: () => void
+  chainId: number
+}
+
+function SafeTxHistoryRow({ tx, index, isExpanded, onToggle, chainId }: HistoryRowProps) {
+  const rejection = isRejectionTx(tx, tx.safeAddress)
+  const bucket = getSafeTxBucket(tx, tx.safeAddress)
+  const status = HISTORY_STATUS[bucket]
+  const displayDate = getTxDisplayDate(tx)
+  const methodLabel = rejection
+    ? 'Cancellation'
+    : tx.summary
+
+  return (
+    <TxRowShell
+      tx={tx}
+      isExpanded={isExpanded}
+      onToggle={onToggle}
+      borderClassName={
+        rejection
+          ? 'border-red-200 dark:border-red-900'
+          : 'border-neutral-200 dark:border-neutral-700'
+      }
+      rowClassName="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-neutral-800"
+      chainId={chainId}
+      actionsEnabled={false}
+    >
+      <RowIndex index={index} />
+      <span
+        className={`min-w-0 flex-1 truncate text-sm font-medium ${
+          rejection
+            ? 'text-red-600 dark:text-red-400'
+            : 'text-neutral-900 dark:text-white'
+        }`}
+      >
+        {methodLabel}
+      </span>
+      <span className="shrink-0 text-sm tabular-nums text-neutral-400 dark:text-neutral-500">
+        {formatTxTime(displayDate)}
+      </span>
+      <span className={`shrink-0 text-sm font-medium ${status.className}`}>
+        {status.label}
+      </span>
+      <ChevronIcon expanded={isExpanded} />
+    </TxRowShell>
+  )
+}
+
+export default function SafeTxList({ transactions, vaultAssetMap, mode = 'pending', chainId }: Props) {
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
   const { data: assetMetadata } = useAssetMetadata()
+  const actionsEnabled = mode === 'pending'
+
+  const dateGroups = useMemo(
+    () => (mode === 'readonly' ? groupTxsByDate(transactions) : []),
+    [mode, transactions],
+  )
+  const indexedDateGroups = useMemo(() => {
+    let running = 0
+    return dateGroups.map((group) => ({
+      dateKey: group.dateKey,
+      label: group.label,
+      txs: group.txs.map((tx) => {
+        running += 1
+        return { tx, index: running }
+      }),
+    }))
+  }, [dateGroups])
+
+  function toggleExpanded(hash: string) {
+    setExpandedHash((current) => (current === hash ? null : hash))
+  }
+
+  if (mode === 'readonly') {
+    return (
+      <div className="space-y-6">
+        {indexedDateGroups.map((group) => (
+          <section key={group.dateKey}>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+              {group.label}
+            </h3>
+            <div className="space-y-2">
+              {group.txs.map(({ tx, index }) => (
+                <SafeTxHistoryRow
+                  key={tx.safeTxHash}
+                  tx={tx}
+                  index={index}
+                  isExpanded={expandedHash === tx.safeTxHash}
+                  onToggle={() => toggleExpanded(tx.safeTxHash)}
+                  chainId={chainId}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-2">
-      {transactions.map((tx) => {
-        const isExpanded = expandedHash === tx.safeTxHash
-        const isRejection = isRejectionTx(tx)
-
-        // Resolve asset symbol for fulfillRedeem rows
-        const fulfillTokenAddr = tx.dataDecoded?.method === 'fulfillRedeem'
-          ? vaultAssetMap[tx.to.toLowerCase()]
-          : undefined
-        const fulfillAsset = fulfillTokenAddr ? assetMetadata?.[fulfillTokenAddr] : undefined
-
-        return (
-          <div
-            key={tx.safeTxHash}
-            className={`overflow-hidden rounded-lg border bg-white dark:bg-neutral-900 ${
-              isRejection
-                ? 'border-red-200 dark:border-red-900'
-                : 'border-neutral-200 dark:border-neutral-700'
-            }`}
-          >
-            {/* Summary row — div+role to allow nested interactive children (CopyButton in SafeMetaBadge) */}
-            <div
-              role="button"
-              tabIndex={0}
-              aria-expanded={isExpanded}
-              onClick={() => setExpandedHash(isExpanded ? null : tx.safeTxHash)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setExpandedHash(isExpanded ? null : tx.safeTxHash)
-                }
-              }}
-              className="flex w-full items-center gap-4 px-5 py-5 text-left cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              {/* Nonce badge */}
-              <span className="shrink-0 rounded-md bg-neutral-100 px-2.5 py-1 font-mono text-sm text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                #{tx.nonce}
-              </span>
-
-              {/* Main content */}
-              <div className="flex-1 min-w-0 space-y-2">
-                {/* Summary text */}
-                {isRejection ? (
-                  <p className="truncate text-base font-semibold text-red-600 dark:text-red-400">
-                    🚫 Cancellation of tx #{tx.nonce}
-                  </p>
-                ) : (
-                  <p className="truncate text-base font-semibold text-neutral-900 dark:text-white">
-                    {tx.summary}
-                  </p>
-                )}
-
-                {/* Role badge(s) + asset chip (if fulfillRedeem) + Safe meta */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {tx.roles.map((role) => (
-                    <span
-                      key={role}
-                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[role]}`}
-                    >
-                      {ROLE_LABELS[role]}
-                    </span>
-                  ))}
-                  {fulfillAsset && (
-                    <span className="inline-flex items-center rounded-md bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:bg-teal-900/40 dark:text-teal-300">
-                      {fulfillAsset.symbol}
-                    </span>
-                  )}
-                  {tx.fulfillPrecheck && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                      FundVault: {formatTokenAmount(tx.fulfillPrecheck.fundVaultBalance, tx.fulfillPrecheck.decimals, 4)} {tx.fulfillPrecheck.symbol}
-                    </span>
-                  )}
-                  {tx.fulfillPrecheck?.isInsufficient && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                      <WarningIcon
-                        color="text-red-500"
-                        msg={`Insufficient FundVault balance. Short by ${formatTokenAmount(tx.fulfillPrecheck.shortfall, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol} (requires ${formatTokenAmount(tx.fulfillPrecheck.requiredAmount, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol}, has ${formatTokenAmount(tx.fulfillPrecheck.fundVaultBalance, tx.fulfillPrecheck.decimals, 4)} ${tx.fulfillPrecheck.symbol}).`}
-                      />
-                      Insufficient FundVault
-                    </span>
-                  )}
-                  <SafeMetaBadge safeAddress={tx.safeAddress} safeInfo={tx.safeInfo} />
-                </div>
-              </div>
-
-              {/* Confirmation progress */}
-              <span
-                className={`shrink-0 text-sm font-semibold ${
-                  tx.isExecutable
-                    ? 'text-green-600 dark:text-green-400'
-                    : 'text-amber-600 dark:text-amber-400'
-                }`}
-              >
-                {tx.confirmationsCount}/{tx.confirmationsRequired}
-                {tx.isExecutable ? ' ✓ Ready' : ' signed'}
-              </span>
-
-              {/* Chevron */}
-              <svg
-                className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
-            </div>
-
-            {/* Expanded detail */}
-            {isExpanded && (
-              <SafeTxDetail tx={tx} safeInfo={tx.safeInfo} safeAddress={tx.safeAddress} />
-            )}
-          </div>
-        )
-      })}
+      {transactions.map((tx, i) => (
+        <SafeTxPendingRow
+          key={tx.safeTxHash}
+          tx={tx}
+          index={i + 1}
+          vaultAssetMap={vaultAssetMap}
+          assetMetadata={assetMetadata}
+          isExpanded={expandedHash === tx.safeTxHash}
+          onToggle={() => toggleExpanded(tx.safeTxHash)}
+          chainId={chainId}
+          actionsEnabled={actionsEnabled}
+        />
+      ))}
     </div>
   )
 }

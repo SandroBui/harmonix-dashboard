@@ -6,9 +6,11 @@ import Providers from "./providers";
 import ConnectWallet from "./components/ConnectWallet";
 import NavLinks from "./components/NavLinks";
 import VaultSelector from "./components/VaultSelector";
+import NetworkBadge from "./components/NetworkBadge";
 import VaultProviderWrapper from "./vault-provider-wrapper";
 import VaultVersionGate from "./vault-version-gate";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
+import AccountMenu from "./components/AccountMenu";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -31,62 +33,49 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const session = process.env.GOOGLE_AUTH === "true" ? await auth() : null;
+  const googleAuth = process.env.GOOGLE_AUTH === "true";
+  const session = googleAuth ? await auth() : null;
+  const showChrome = !googleAuth || Boolean(session?.user?.email);
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <Providers>
-          <Suspense fallback={null}>
-            <VaultProviderWrapper>
-              <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                <nav className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
-                  <Link
-                    href="/"
-                    className="text-sm font-semibold text-neutral-900 dark:text-white"
-                  >
-                    Harmonix
-                  </Link>
-                  <NavLinks />
-                  <div className="ml-auto flex items-center gap-3">
-                    <VaultSelector />
-                    <ConnectWallet />
-                    {session?.user && (
-                      <div className="flex items-center gap-2">
-                        {session.user.image && (
-                          <img
-                            src={session.user.image}
-                            alt={session.user.name ?? "User"}
-                            className="h-7 w-7 rounded-full"
-                          />
-                        )}
-                        <span className="text-sm text-neutral-600 dark:text-neutral-300">
-                          {session.user.name}
-                        </span>
-                        <form
-                          action={async () => {
-                            "use server";
-                            await signOut({ redirectTo: "/login" });
-                          }}
-                        >
-                          <button
-                            type="submit"
-                            className="text-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
-                          >
-                            Sign out
-                          </button>
-                        </form>
-                      </div>
-                    )}
-                  </div>
-                </nav>
-              </header>
-              <VaultVersionGate>{children}</VaultVersionGate>
-            </VaultProviderWrapper>
-          </Suspense>
-        </Providers>
+        {showChrome ? (
+          <Providers>
+            <Suspense fallback={null}>
+              <VaultProviderWrapper>
+                <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                  <nav className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
+                    <Link
+                      href="/"
+                      className="text-sm font-semibold text-neutral-900 dark:text-white"
+                    >
+                      Harmonix
+                    </Link>
+                    <NavLinks />
+                    <div className="ml-auto flex items-center gap-3">
+                      <VaultSelector />
+                      <NetworkBadge />
+                      <ConnectWallet />
+                      {session?.user && (
+                        <AccountMenu
+                          name={session.user.name}
+                          image={session.user.image}
+                        />
+                      )}
+                    </div>
+                  </nav>
+                </header>
+                <VaultVersionGate>{children}</VaultVersionGate>
+              </VaultProviderWrapper>
+            </Suspense>
+          </Providers>
+        ) : (
+          children
+        )}
       </body>
     </html>
   );

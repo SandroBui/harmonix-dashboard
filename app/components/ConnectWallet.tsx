@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { useConnection, useConnect, useDisconnect, useSwitchChain, useConnectors } from 'wagmi'
 import { hyperEvmMainnet } from '@/lib/wagmi-config'
 import CopyButton from '@/app/components/CopyButton'
@@ -14,6 +15,18 @@ export default function ConnectWallet() {
   const { connect, isPending: isConnecting } = useConnect()
   const { disconnect } = useDisconnect()
   const { switchChain, isPending: isSwitching } = useSwitchChain()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
 
   if (!isConnected) {
     return (
@@ -40,17 +53,37 @@ export default function ConnectWallet() {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="rounded-full bg-neutral-100 px-2.5 py-1 font-mono text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-        {truncateAddress(address!)}
+    <div ref={ref} className="relative">
+      <div className="flex items-center rounded-full bg-neutral-100 px-2.5 py-1 font-mono text-xs text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label="Wallet menu"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
+          {truncateAddress(address!)}
+        </button>
         <CopyButton value={address!} />
-      </span>
-      <button
-        onClick={() => disconnect()}
-        className="text-xs text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
-      >
-        Disconnect
-      </button>
+      </div>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-50 mt-2 min-w-[140px] overflow-hidden rounded-md border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              disconnect()
+            }}
+            className="block w-full rounded px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
     </div>
   )
 }

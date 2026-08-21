@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { formatTokenAmount } from '@/lib/format'
 import { useConfirmSafeTransaction, useExecuteSafeTransaction, useCancelSafeTransaction } from '@/lib/safe/hooks'
+import { isRejectionTx } from '@/lib/safe/status'
 import type { PendingSafeTx, SafeInfo } from '@/lib/safe/types'
 
 type Props = {
@@ -13,12 +14,6 @@ type Props = {
 }
 
 const HIGH_VALUE_FULFILL_THRESHOLD = 100_000n
-
-function isRejectionTx(tx: PendingSafeTx, safeAddress: string): boolean {
-  const hasEmptyData = !tx.data || tx.data === '0x'
-  const toSelf = tx.to.toLowerCase() === safeAddress.toLowerCase()
-  return hasEmptyData && toSelf
-}
 
 function getFulfillAmount(tx: PendingSafeTx): bigint | null {
   const amount = tx.fulfillPrecheck?.requiredAmount

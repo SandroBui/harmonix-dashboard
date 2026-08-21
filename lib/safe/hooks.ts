@@ -9,13 +9,11 @@ import { DYNAMIC_SAFE_ROLES, getDefaultSafeAddress, getResolvedSafeAddressForRol
 import type { RoleType, ResolvedRoleSafes } from './roles'
 import { initProtocolKit } from './protocol-kit'
 import { decodeTransactionData, summarizeDecodedData } from './decoder'
-import { getV2SafeEntries, inferV2RoleFromMethod } from './v2-safes'
 import type { PendingSafeTx, SafeInfo, FulfillPrecheck, RoleTaggedTx } from './types'
 import { ACCESS_MANAGER_ABI, HA_VAULT_READER_ABI, VAULT_ASSET_ABI } from '@/lib/contracts'
 import { getPublicClient } from '@/lib/client'
 import { useVaultConfig } from '@/lib/vault-context'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import { V2_AUTO_REFRESH_MS } from '@/lib/v2-auto-refresh'
 
 const SAFE_ON_CHAIN_ABI = [
   {
@@ -204,12 +202,26 @@ export function useResolvedRoleSafes() {
 // Falls back to the Safe Transaction Service if the contract read fails — keeps
 // v3/v2 compatible with non-standard deployments. Pending txs still use the API.
 
-export function useSafeInfo(safeAddress?: `0x${string}`) {
+export function useSafeInfo(safeAddress?: `0x${string}`, chainId?: number) {
   const config = useVaultConfig()
   const addr = safeAddress ?? getDefaultSafeAddress(config)
+  const chain = chainId ?? config.chainId
+  // The viem client only speaks to the vault chain, and Safes are often deployed
+  // at the same address on several chains — reading it for an off-chain Safe
+  // would return another deployment's owners.
+  const isVaultChain = chain === config.chainId
   return useQuery<SafeInfo>({
-    queryKey: ['safe', 'info', 'onchain', addr],
+    queryKey: ['safe', 'info', 'onchain', chain, addr],
     queryFn: async () => {
+      if (!isVaultChain) {
+        const info = await getApiKit(chain).getSafeInfo(addr)
+        return {
+          address: addr,
+          owners: info.owners,
+          threshold: info.threshold,
+          nonce: Number(info.nonce),
+        }
+      }
       try {
         const publicClient = getPublicClient()
         const [owners, threshold, nonce] = await Promise.all([
@@ -236,7 +248,7 @@ export function useSafeInfo(safeAddress?: `0x${string}`) {
           nonce: Number(nonce),
         }
       } catch {
-        const apiKit = getApiKit()
+        const apiKit = getApiKit(chain)
         const info = await apiKit.getSafeInfo(addr)
         return {
           address: addr,
@@ -251,24 +263,52 @@ export function useSafeInfo(safeAddress?: `0x${string}`) {
   })
 }
 
+export const MULTISIG_PAGE_SIZE = 10
+
+export type MultisigTxPage = {
+  txs: PendingSafeTx[]
+  count: number
+  hasMore: boolean
+}
+
 // ─── Fetch Pending Transactions ───────────────────────────────────────────────
 
-export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAssetMap?: Record<string, string>) {
+export function usePendingSafeTransactions(
+  safeAddress?: `0x${string}`,
+  vaultAssetMap?: Record<string, string>,
+  options: { enabled?: boolean; chainId?: number; limit?: number; offset?: number } = {},
+) {
   const config = useVaultConfig()
   const { data: assetMetadata } = useAssetMetadata()
   const addr = safeAddress ?? getDefaultSafeAddress(config)
+  const chain = options.chainId ?? config.chainId
+  const limit = options.limit ?? MULTISIG_PAGE_SIZE
+  const offset = options.offset ?? 0
+  const isVaultChain = chain === config.chainId
   const vaultAssetMapKey = getVaultAssetMapKey(vaultAssetMap)
   const assetMetadataKey = getAssetMetadataKey(assetMetadata)
-  return useQuery<PendingSafeTx[]>({
-    queryKey: ['safe', 'pendingTxs', addr, config.haVaultReaderAddress, vaultAssetMapKey, assetMetadataKey],
+  return useQuery<MultisigTxPage>({
+    queryKey: ['safe', 'pendingTxs', chain, addr, limit, offset, config.haVaultReaderAddress, vaultAssetMapKey, assetMetadataKey],
     queryFn: async () => {
-      const apiKit = getApiKit()
-      const response = await apiKit.getPendingTransactions(addr)
+      if (!addr || addr === '0x') return { txs: [], count: 0, hasMore: false }
+      const apiKit = getApiKit(chain)
+      const response = await apiKit.getPendingTransactions(addr, {
+        limit,
+        offset,
+        ordering: 'nonce',
+      })
       const txs = response.results as SafeMultisigTransactionResponse[]
       const decodedResults = await Promise.all(
         txs.map(async (tx) => ({
           tx,
-          dataDecoded: tx.data ? await decodeTransactionData(tx.data, tx.to) : null,
+          dataDecoded: tx.data
+            ? await decodeTransactionData(tx.data, tx.to, {
+                chainId: chain,
+                from: addr,
+                value: tx.value ?? '0',
+                safeTxHash: tx.safeTxHash,
+              })
+            : null,
         })),
       )
 
@@ -288,7 +328,8 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
         assetAddress: `0x${string}`
       }> = []
       for (const { tx, dataDecoded } of decodedResults) {
-        if (dataDecoded?.method !== 'fulfillRedeem') continue
+        // The precheck reads vault contracts, which only exist on the vault chain.
+        if (!isVaultChain || dataDecoded?.method !== 'fulfillRedeem') continue
         const controllersParam = dataDecoded.parameters.find((p) => p.name === 'controllers')
         const tokenAddr = vaultAssetMap?.[tx.to.toLowerCase()]
         if (!controllersParam || !tokenAddr) continue
@@ -357,7 +398,7 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
         }
       }
 
-      return decodedResults.map(({ tx, dataDecoded }) => {
+      const enriched = decodedResults.map(({ tx, dataDecoded }) => {
         const confirmationsCount = tx.confirmations?.length ?? 0
         let fulfillPrecheck: FulfillPrecheck | undefined
 
@@ -398,64 +439,45 @@ export function usePendingSafeTransactions(safeAddress?: `0x${string}`, vaultAss
           dataDecoded,
           summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata ?? {}),
           fulfillPrecheck,
+          isExecuted: tx.isExecuted ?? false,
+          isSuccessful: tx.isSuccessful ?? null,
+          executionDate: tx.executionDate ?? null,
+          transactionHash: tx.transactionHash ?? null,
         } satisfies PendingSafeTx
       })
+      const count = response.count
+      const hasMore = Boolean(response.next) || offset + enriched.length < count
+      return { txs: enriched, count, hasMore }
     },
     refetchInterval: (query) => {
       if (isRateLimitedError(query.state.error)) return 90_000
-      const hasPending = (query.state.data?.length ?? 0) > 0
+      const hasPending = (query.state.data?.txs.length ?? 0) > 0
       return hasPending ? 30_000 : 60_000
     },
     staleTime: 30_000,
-    enabled: Boolean(addr && addr !== '0x'),
+    placeholderData: (previous, previousQuery) => {
+      const previousKey = previousQuery?.queryKey as unknown[] | undefined
+      return previousKey?.[2] === chain && previousKey?.[3] === addr ? previous : undefined
+    },
+    enabled: Boolean(addr && addr !== '0x') && options.enabled !== false,
     refetchIntervalInBackground: false,
   })
 }
 
-async function readSafeInfo(addr: `0x${string}`): Promise<SafeInfo> {
-  try {
-    const publicClient = getPublicClient()
-    const [owners, threshold, nonce] = await Promise.all([
-      publicClient.readContract({
-        address: addr,
-        abi: SAFE_ON_CHAIN_ABI,
-        functionName: 'getOwners',
-      }) as Promise<readonly `0x${string}`[]>,
-      publicClient.readContract({
-        address: addr,
-        abi: SAFE_ON_CHAIN_ABI,
-        functionName: 'getThreshold',
-      }) as Promise<bigint>,
-      publicClient.readContract({
-        address: addr,
-        abi: SAFE_ON_CHAIN_ABI,
-        functionName: 'nonce',
-      }) as Promise<bigint>,
-    ])
-    return {
-      address: addr,
-      owners: owners.map((o) => getAddress(o)),
-      threshold: Number(threshold),
-      nonce: Number(nonce),
-    }
-  } catch {
-    const apiKit = getApiKit()
-    const info = await apiKit.getSafeInfo(addr)
-    return {
-      address: addr,
-      owners: info.owners,
-      threshold: info.threshold,
-      nonce: Number(info.nonce),
-    }
-  }
-}
-
-async function enrichPendingTx(
+async function enrichSafeTx(
   tx: SafeMultisigTransactionResponse,
   vaultAssetMap?: Record<string, string>,
   assetMetadata: Record<string, { symbol: string; decimals: number }> = {},
+  chainId?: number,
 ): Promise<PendingSafeTx> {
-  const dataDecoded = tx.data ? await decodeTransactionData(tx.data, tx.to) : null
+  const dataDecoded = tx.data
+    ? await decodeTransactionData(tx.data, tx.to, {
+        chainId,
+        from: tx.safe,
+        value: tx.value ?? '0',
+        safeTxHash: tx.safeTxHash,
+      })
+    : null
   const confirmationsCount = tx.confirmations?.length ?? 0
   return {
     safeTxHash: tx.safeTxHash,
@@ -468,65 +490,174 @@ async function enrichPendingTx(
     confirmationsRequired: tx.confirmationsRequired,
     confirmations: tx.confirmations ?? [],
     confirmationsCount,
-    isExecutable: confirmationsCount >= tx.confirmationsRequired,
+    isExecutable: !tx.isExecuted && confirmationsCount >= tx.confirmationsRequired,
     dataDecoded,
     summary: summarizeDecodedData(dataDecoded, tx.to, tx.value ?? '0', vaultAssetMap, assetMetadata),
+    isExecuted: tx.isExecuted ?? false,
+    isSuccessful: tx.isSuccessful ?? null,
+    executionDate: tx.executionDate ?? null,
+    transactionHash: tx.transactionHash ?? null,
   }
 }
 
-// ─── Fetch Pending Transactions (v2 — all configured Safes) ───────────────────
+export type MultisigTxQueryOptions = {
+  limit?: number
+  offset?: number
+  /** Newest-first for History; default `-modified` matches Safe TS. */
+  ordering?: string
+  /** When false, skip the query (inactive lifecycle tab). Default true. */
+  enabled?: boolean
+  /** Safe's chain; defaults to the vault chain. */
+  chainId?: number
+}
 
-export function useV2PendingSafeTransactions(vaultAssetMap?: Record<string, string>) {
+function sortByNewest(a: PendingSafeTx, b: PendingSafeTx): number {
+  const aTime = Date.parse(a.executionDate ?? a.submissionDate) || 0
+  const bTime = Date.parse(b.executionDate ?? b.submissionDate) || 0
+  return bTime - aTime
+}
+
+// ─── Fetch Multisig Transactions (History) ───────────────────────────────────
+
+export function useMultisigSafeTransactions(
+  safeAddress?: `0x${string}`,
+  options: MultisigTxQueryOptions = {},
+  vaultAssetMap?: Record<string, string>,
+) {
   const config = useVaultConfig()
   const { data: assetMetadata } = useAssetMetadata()
-  const entries = getV2SafeEntries(config)
-  const addressesKey = entries.map((e) => e.address).join(',')
+  const addr = safeAddress
+  const chain = options.chainId ?? config.chainId
+  const limit = options.limit ?? MULTISIG_PAGE_SIZE
+  const offset = options.offset ?? 0
+  const ordering = options.ordering ?? '-modified'
   const vaultAssetMapKey = getVaultAssetMapKey(vaultAssetMap)
   const assetMetadataKey = getAssetMetadataKey(assetMetadata)
 
-  return useQuery<RoleTaggedTx[]>({
-    queryKey: ['safe', 'pendingTxsV2', addressesKey, vaultAssetMapKey, assetMetadataKey],
+  return useQuery<MultisigTxPage>({
+    queryKey: [
+      'safe',
+      'multisigTxs',
+      chain,
+      addr,
+      limit,
+      offset,
+      ordering,
+      vaultAssetMapKey,
+      assetMetadataKey,
+    ],
     queryFn: async () => {
-      const apiKit = getApiKit()
-      const safeInfoMap = new Map<string, SafeInfo>()
-      const merged = new Map<string, RoleTaggedTx>()
-
-      await Promise.all(
-        entries.map(async (entry) => {
-          const info = await readSafeInfo(entry.address)
-          safeInfoMap.set(entry.address.toLowerCase(), info)
-        }),
-      )
-
-      for (const entry of entries) {
-        const response = await apiKit.getPendingTransactions(entry.address)
-        const txs = response.results as SafeMultisigTransactionResponse[]
-        const enriched = await Promise.all(
-          txs.map((tx) => enrichPendingTx(tx, vaultAssetMap, assetMetadata ?? {})),
-        )
-
-        for (const tx of enriched) {
-          if (merged.has(tx.safeTxHash)) continue
-          const inferredRole = inferV2RoleFromMethod(tx.dataDecoded?.method) ?? entry.role
-          merged.set(tx.safeTxHash, {
-            ...tx,
-            roles: [inferredRole],
-            safeAddress: entry.address,
-            safeInfo: safeInfoMap.get(entry.address.toLowerCase()),
-          })
-        }
-      }
-
-      return Array.from(merged.values()).sort((a, b) => Number(a.nonce) - Number(b.nonce))
+      if (!addr || addr === '0x') return { txs: [], count: 0, hasMore: false }
+      const apiKit = getApiKit(chain)
+      const meta = assetMetadata ?? {}
+      const response = await apiKit.getMultisigTransactions(addr, {
+        limit,
+        offset,
+        ordering,
+      })
+      const raw = response.results as SafeMultisigTransactionResponse[]
+      const txs = (
+        await Promise.all(raw.map((tx) => enrichSafeTx(tx, vaultAssetMap, meta, chain)))
+      ).sort(sortByNewest)
+      const count = response.count
+      const hasMore = Boolean(response.next) || offset + raw.length < count
+      return { txs, count, hasMore }
     },
     refetchInterval: (query) => {
       if (isRateLimitedError(query.state.error)) return 90_000
-      return V2_AUTO_REFRESH_MS
+      return 60_000
     },
     staleTime: 30_000,
-    enabled: entries.length > 0,
+    // Keeps rows on screen while paginating one Safe, but never carries another
+    // Safe's (or chain's) txs over — they would be relabelled with this Safe.
+    placeholderData: (previous, previousQuery) => {
+      const previousKey = previousQuery?.queryKey as unknown[] | undefined
+      return previousKey?.[2] === chain && previousKey?.[3] === addr ? previous : undefined
+    },
+    enabled: Boolean(addr && addr !== '0x') && options.enabled !== false,
     refetchIntervalInBackground: false,
   })
+}
+
+// ─── Fetch Transactions for a Single Safe ─────────────────────────────────────
+//
+// Used when the Safe Transactions page is scoped to one Safe from the vault
+// config instead of aggregating across role Safes.
+
+export type SafeTxTagging = {
+  /** Fallback role when the method maps to nothing; null for Safes with no role. */
+  role: RoleType | null
+  inferRole: (method: string | undefined) => RoleType | null
+}
+
+function tagSafeTxs(
+  txs: PendingSafeTx[] | undefined,
+  safeAddress: `0x${string}` | undefined,
+  safeInfo: SafeInfo | undefined,
+  tagging: SafeTxTagging,
+): RoleTaggedTx[] {
+  if (!txs || !safeAddress) return []
+  return txs.map((tx) => {
+    const role = tagging.inferRole(tx.dataDecoded?.method) ?? tagging.role
+    return { ...tx, roles: role ? [role] : [], safeAddress, safeInfo }
+  })
+}
+
+export function useSingleSafePendingTxs(
+  safeAddress: `0x${string}` | undefined,
+  vaultAssetMap: Record<string, string> | undefined,
+  tagging: SafeTxTagging,
+  options: { enabled?: boolean; chainId?: number; limit?: number; offset?: number } = {},
+) {
+  const enabled = options.enabled !== false && Boolean(safeAddress)
+  const query = usePendingSafeTransactions(safeAddress, vaultAssetMap, {
+    enabled,
+    chainId: options.chainId,
+    limit: options.limit,
+    offset: options.offset,
+  })
+  const { data: safeInfo } = useSafeInfo(enabled ? safeAddress : undefined, options.chainId)
+
+  const txs = enabled
+    ? tagSafeTxs(query.data?.txs, safeAddress, safeInfo, tagging).sort(
+        (a, b) => Number(a.nonce) - Number(b.nonce),
+      )
+    : []
+
+  return {
+    txs,
+    count: enabled ? (query.data?.count ?? 0) : 0,
+    isLoading: enabled && query.isLoading && !query.data,
+    isFetchingMore: enabled && query.isFetching && query.isPlaceholderData,
+    hasError: enabled && Boolean(query.error),
+    hasMore: Boolean(enabled && query.data?.hasMore),
+    refetch: () => {
+      query.refetch()
+    },
+  }
+}
+
+export function useSingleSafeMultisigTxs(
+  safeAddress: `0x${string}` | undefined,
+  vaultAssetMap: Record<string, string> | undefined,
+  tagging: SafeTxTagging,
+  options: MultisigTxQueryOptions = {},
+) {
+  const enabled = options.enabled !== false && Boolean(safeAddress)
+  const query = useMultisigSafeTransactions(safeAddress, { ...options, enabled }, vaultAssetMap)
+  const { data: safeInfo } = useSafeInfo(enabled ? safeAddress : undefined, options.chainId)
+
+  return {
+    txs: enabled ? tagSafeTxs(query.data?.txs, safeAddress, safeInfo, tagging) : [],
+    count: enabled ? (query.data?.count ?? 0) : 0,
+    isLoading: enabled && query.isLoading && !query.data,
+    isFetchingMore: enabled && query.isFetching && query.isPlaceholderData,
+    hasError: enabled && Boolean(query.error),
+    hasMore: Boolean(enabled && query.data?.hasMore),
+    refetch: () => {
+      query.refetch()
+    },
+  }
 }
 
 // ─── Sign (Confirm) a Pending Transaction ─────────────────────────────────────
@@ -558,7 +689,6 @@ export function useConfirmSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
-      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -589,7 +719,6 @@ export function useExecuteSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
-      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
       queryClient.invalidateQueries({ queryKey: ['safe', 'info'] })
     },
   })
@@ -645,7 +774,6 @@ export function useProposeSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
-      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -708,7 +836,6 @@ export function useProposeSafeMultiSendTransaction(safeAddress?: `0x${string}`) 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
-      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }
@@ -749,7 +876,6 @@ export function useCancelSafeTransaction(safeAddress?: `0x${string}`) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxs'] })
-      queryClient.invalidateQueries({ queryKey: ['safe', 'pendingTxsV2'] })
     },
   })
 }

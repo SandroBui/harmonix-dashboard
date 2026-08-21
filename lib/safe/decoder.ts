@@ -6,7 +6,7 @@ import { TIMELOCKED_FUNCTIONS } from '@/lib/timelocks-reader'
 import { ROLE_HASHES, ROLE_LABELS } from './roles'
 import { V2_ENCODED_ROLE_HASHES, V2_ENCODED_ROLE_LABELS } from '@/lib/v2-role-hashes'
 import { getApiKit } from './api-kit'
-import { formatDenomination } from '@/lib/format'
+import { formatDenomination, formatTokenAmount } from '@/lib/format'
 import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
@@ -46,45 +46,352 @@ export function resolveSelector(selector: string): string {
 
 /**
  * Attempts to decode transaction calldata, trying:
- *  1. Safe Transaction Service data-decoder endpoint (has broad ABI coverage)
- *  2. Local known ABIs as fallback (vault + ERC-20)
+ *  1. Harmonix decode API (`TRANSACTION_DECODE_API_BASE_URL` via `/api/transactions/decode`)
+ *  2. Safe Transaction Service data-decoder endpoint (broad ABI coverage)
+ *  3. Local known ABIs (vault + ERC-20)
  *
  * Returns null when decoding is not possible (e.g. raw ETH transfer).
  *
  * When the call is a Safe `multiSend(bytes)`, the returned `DataDecoded` is
- * augmented with `multiSendInner` — one entry per inner call, each decoded
- * via the local ABI fallback (synchronous, no extra service round-trips).
+ * augmented with `multiSendInner` — one entry per inner call. Prefer inner
+ * calls from the Harmonix API when present; otherwise parse the packed blob
+ * and decode each inner `data` via the local ABI fallback.
  */
+export type DecodeTxContext = {
+  chainId?: number
+  from?: string
+  value?: string
+  /** When set, reuse a prior decode for this Safe tx (load more), not for matching calldata. */
+  safeTxHash?: string
+}
+
+const decodeBySafeTxHash = new Map<string, Promise<DataDecoded | null>>()
+
 export async function decodeTransactionData(
   data: string,
   to: string,
+  chainIdOrContext?: number | DecodeTxContext,
 ): Promise<DataDecoded | null> {
   if (!data || data === '0x') return null
 
-  let decoded: DataDecoded | null = null
+  const context: DecodeTxContext =
+    typeof chainIdOrContext === 'number' || chainIdOrContext === undefined
+      ? { chainId: chainIdOrContext }
+      : chainIdOrContext
 
-  // ── 1. Safe Transaction Service decoder ────────────────────────────────
+  const hashKey = context.safeTxHash?.toLowerCase()
+  if (hashKey) {
+    const cached = decodeBySafeTxHash.get(hashKey)
+    if (cached) return cached
+  }
+
+  const pending = decodeTransactionDataUncached(data, to, context)
+  if (hashKey) decodeBySafeTxHash.set(hashKey, pending)
   try {
-    const apiKit = getApiKit()
-    decoded = await apiKit.decodeData(data, to) as DataDecoded
-  } catch {
-    // Service may not recognise the ABI — fall through to local decoding
+    return await pending
+  } catch (error) {
+    if (hashKey) decodeBySafeTxHash.delete(hashKey)
+    throw error
+  }
+}
+
+async function decodeTransactionDataUncached(
+  data: string,
+  to: string,
+  context: DecodeTxContext,
+): Promise<DataDecoded | null> {
+  const chainId = context.chainId
+
+  let decoded: DataDecoded | null = null
+  const harmonix = await decodeViaHarmonixApi(data, to, context)
+  if (harmonix.ok) {
+    // Harmonix HTTP 200 is authoritative — do not hit Safe data-decoder.
+    decoded = harmonix.decoded ?? decodeLocally(data)
+  } else {
+    try {
+      const apiKit = getApiKit(chainId ?? 999)
+      decoded = await apiKit.decodeData(data, to) as DataDecoded
+    } catch {
+      // Service may not recognise the ABI — fall through to local decoding
+    }
+
+    if (!decoded) {
+      decoded = decodeLocally(data)
+    }
   }
 
-  // ── 2. Local ABI decoding ───────────────────────────────────────────────
-  if (!decoded) {
-    decoded = decodeLocally(data)
-  }
-
-  // ── 3. Expand multiSend(bytes) inner calls ─────────────────────────────
-  if (decoded?.method === 'multiSend') {
+  if (decoded?.method === 'multiSend' && !decoded.multiSendInner) {
     const txsParam = decoded.parameters.find((p) => p.name === 'transactions')?.value
     if (txsParam) {
       decoded.multiSendInner = parseMultiSendInner(txsParam)
     }
   }
 
+  return decoded ? withSynthesizedAbi(decoded) : null
+}
+
+function withSynthesizedAbi(decoded: DataDecoded): DataDecoded {
+  // Harmonix SUCCESS envelopes often omit ABI; do not invent a fragment that
+  // disagrees with the API payload. Local / Safe decodes still get a fragment.
+  const shouldSynthesize = !decoded.abi && !decoded.actionLabel && !decoded.protocolName
+  return {
+    ...decoded,
+    abi: decoded.abi ?? (shouldSynthesize ? synthesizeFunctionAbi(decoded.method, decoded.parameters) : undefined),
+    multiSendInner: decoded.multiSendInner?.map((call) => ({
+      ...call,
+      decoded: call.decoded ? withSynthesizedAbi(call.decoded) : null,
+    })),
+  }
+}
+
+function getDashboardOrigin(): string {
+  if (typeof window !== 'undefined') return window.location.origin
+  return process.env.SAFE_PROXY_ORIGIN ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+}
+
+async function decodeViaHarmonixApi(
+  data: string,
+  to: string,
+  context: DecodeTxContext,
+): Promise<{ ok: boolean; decoded: DataDecoded | null }> {
+  try {
+    const res = await fetch(`${getDashboardOrigin()}/api/transactions/decode`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        chain_id: context.chainId,
+        from: context.from,
+        to,
+        data,
+        value: context.value ?? '0',
+      }),
+    })
+    if (!res.ok) return { ok: false, decoded: null }
+    const payload: unknown = await res.json()
+    return { ok: true, decoded: mapHarmonixDecodeResponse(payload) }
+  } catch {
+    return { ok: false, decoded: null }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function stringifyAbiJson(value: unknown): string | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return undefined
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2)
+    } catch {
+      return trimmed
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return undefined
+  }
+}
+
+function synthesizeFunctionAbi(method: string, parameters: DecodedParam[]): string {
+  return JSON.stringify(
+    [
+      {
+        type: 'function',
+        name: method,
+        inputs: parameters.map((p) => ({ name: p.name, type: p.type })),
+        outputs: [],
+        stateMutability: 'nonpayable',
+      },
+    ],
+    null,
+    2,
+  )
+}
+
+function abiFromObject(obj: Record<string, unknown>): string | undefined {
+  return (
+    stringifyAbiJson(obj.abi) ??
+    stringifyAbiJson(obj.abi_json) ??
+    stringifyAbiJson(obj.abiJson)
+  )
+}
+
+function inferSolidityType(value: unknown): string {
+  if (typeof value === 'boolean') return 'bool'
+  if (typeof value === 'number' || typeof value === 'bigint') return 'uint256'
+  if (typeof value === 'string') {
+    if (/^0x[0-9a-fA-F]{40}$/.test(value)) return 'address'
+    if (/^0x[0-9a-fA-F]{8}$/.test(value)) return 'bytes4'
+    if (/^0x[0-9a-fA-F]+$/.test(value) && value.length > 10) return 'bytes'
+    if (/^\d+$/.test(value)) return 'uint256'
+    return 'string'
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'tuple[]'
+    return `${inferSolidityType(value[0])}[]`
+  }
+  return 'tuple'
+}
+
+function paramValueToString(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value)
+  }
+  if (Array.isArray(value)) {
+    return JSON.stringify(value.map((item) => (typeof item === 'string' ? item : String(item))))
+  }
+  return JSON.stringify(value)
+}
+
+function methodFromObject(obj: Record<string, unknown>): string | null {
+  const fnObj = isRecord(obj.function) ? obj.function : null
+  const direct =
+    (typeof obj.method === 'string' && obj.method) ||
+    (typeof obj.functionName === 'string' && obj.functionName) ||
+    (typeof obj.function_name === 'string' && obj.function_name) ||
+    (typeof obj.function === 'string' && obj.function) ||
+    (fnObj && typeof fnObj.name === 'string' && fnObj.name) ||
+    null
+  if (direct) {
+    const paren = direct.indexOf('(')
+    return paren > 0 ? direct.slice(0, paren) : direct
+  }
+  if (typeof obj.signature === 'string' && obj.signature.includes('(')) {
+    return obj.signature.slice(0, obj.signature.indexOf('('))
+  }
+  if (fnObj && typeof fnObj.signature === 'string' && fnObj.signature.includes('(')) {
+    return fnObj.signature.slice(0, fnObj.signature.indexOf('('))
+  }
+  if (isRecord(obj.abi) && typeof obj.abi.name === 'string') {
+    return obj.abi.name
+  }
+  // ABI fragment `{ type: "function", name: "transfer", inputs: [...] }`
+  if (obj.type === 'function' && typeof obj.name === 'string' && obj.name) {
+    const paren = obj.name.indexOf('(')
+    return paren > 0 ? obj.name.slice(0, paren) : obj.name
+  }
+  return null
+}
+
+function mapParameters(parameters: unknown): DecodedParam[] {
+  if (Array.isArray(parameters)) {
+    return parameters.map((param, i) => {
+      if (!isRecord(param)) {
+        return { name: `param${i}`, type: 'unknown', value: paramValueToString(param) }
+      }
+      return {
+        name: typeof param.name === 'string' ? param.name : `param${i}`,
+        type: typeof param.type === 'string' ? param.type : 'unknown',
+        value: paramValueToString(param.value ?? param.val ?? param.arg),
+      }
+    })
+  }
+  if (isRecord(parameters)) {
+    return Object.entries(parameters).map(([name, value]) => ({
+      name,
+      type: inferSolidityType(value),
+      value: paramValueToString(value),
+    }))
+  }
+  return []
+}
+
+function mapDecodedObject(obj: Record<string, unknown>): DataDecoded | null {
+  const method = methodFromObject(obj)
+  if (!method) return null
+
+  const parameters = mapParameters(
+    obj.parameters ?? obj.params ?? obj.inputs ?? obj.args ?? obj.arguments,
+  )
+  const protocol = isRecord(obj.protocol) ? obj.protocol : null
+  const contract = isRecord(obj.contract) ? obj.contract : null
+  const action = isRecord(obj.action) ? obj.action : null
+  const decoded: DataDecoded = {
+    method,
+    parameters,
+    abi: abiFromObject(obj),
+    protocolName: typeof protocol?.name === 'string' ? protocol.name : undefined,
+    contractName: typeof contract?.name === 'string' ? contract.name : undefined,
+    actionLabel:
+      (typeof action?.type === 'string' && action.type) ||
+      (typeof obj.action === 'string' && obj.action) ||
+      undefined,
+  }
+
+  const inner = mapMultiSendInner(
+    obj.multiSendInner ?? obj.inner_calls ?? obj.innerCalls ?? obj.transactions ?? obj.calls,
+  )
+  if (inner) decoded.multiSendInner = inner
+
+  if (!decoded.multiSendInner) {
+    const rawParams = obj.parameters ?? obj.params ?? obj.inputs ?? obj.args
+    if (Array.isArray(rawParams)) {
+      const rawTxs = rawParams.find((p) => isRecord(p) && p.name === 'transactions')
+      if (isRecord(rawTxs)) {
+        const mapped = mapMultiSendInner(rawTxs.valueDecoded ?? rawTxs.value_decoded ?? rawTxs.value)
+        if (mapped) decoded.multiSendInner = mapped
+      }
+    }
+  }
+
   return decoded
+}
+
+function mapMultiSendInner(value: unknown): MultiSendInnerCall[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  const calls: MultiSendInnerCall[] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    const to =
+      (typeof item.to === 'string' && item.to) ||
+      (typeof item.target === 'string' && item.target) ||
+      null
+    if (!to) continue
+    const data = typeof item.data === 'string' ? item.data : '0x'
+    const operation = typeof item.operation === 'number' ? item.operation : 0
+    const callValue = item.value == null ? '0' : String(item.value)
+    const innerDecodedRaw = item.decoded ?? item.dataDecoded ?? item.data_decoded
+    calls.push({
+      operation,
+      to,
+      value: callValue,
+      data,
+      decoded: isRecord(innerDecodedRaw) ? mapDecodedObject(innerDecodedRaw) : null,
+    })
+  }
+  return calls.length > 0 ? calls : undefined
+}
+
+function unwrapDecodePayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload
+  const nested =
+    (isRecord(payload.data) && payload.data) ||
+    (isRecord(payload.decoded) && payload.decoded) ||
+    (isRecord(payload.decoded_data) && payload.decoded_data) ||
+    (isRecord(payload.decoded_tx) && payload.decoded_tx) ||
+    (isRecord(payload.decodedTx) && payload.decodedTx) ||
+    (isRecord(payload.result) && payload.result) ||
+    (isRecord(payload.decode_result) && payload.decode_result) ||
+    null
+  if (nested && (methodFromObject(nested) || isRecord(nested.function) || nested.parameters || nested.params || nested.args || nested.inputs)) {
+    return nested
+  }
+  return payload
+}
+
+function mapHarmonixDecodeResponse(payload: unknown): DataDecoded | null {
+  const unwrapped = unwrapDecodePayload(payload)
+  if (!isRecord(unwrapped)) return null
+  return mapDecodedObject(unwrapped)
 }
 
 /**
@@ -129,7 +436,13 @@ function decodeLocally(data: string): DataDecoded | null {
           }))
         : []
 
-      return { method: functionName, parameters }
+      return {
+        method: functionName,
+        parameters,
+        abi:
+          stringifyAbiJson(funcEntry ? [funcEntry] : undefined) ??
+          synthesizeFunctionAbi(functionName, parameters),
+      }
     } catch {
       continue
     }
@@ -186,8 +499,86 @@ function parseMultiSendInner(bytesHex: string): MultiSendInnerCall[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Fills placeholders in a Harmonix `action.type` template.
+ * `{0}` / `{paramName}` — raw value (addresses truncated).
+ * `{0/6}` / `{paramName/6}` — numeric value scaled by 6 decimals (e.g. 1000000 → 1).
+ */
+export function interpolateActionLabel(actionLabel: string, parameters: DecodedParam[]): string {
+  const byName = new Map(parameters.map((p) => [p.name.toLowerCase(), p]))
+  return actionLabel.replace(/\{([^}]+)\}/g, (match, key: string) => {
+    const filled = resolveActionPlaceholder(key.trim(), parameters, byName)
+    return filled ?? match
+  })
+}
+
+function resolveActionPlaceholder(
+  key: string,
+  parameters: DecodedParam[],
+  byName: Map<string, DecodedParam>,
+): string | null {
+  let ref = key
+  let decimals: number | undefined
+  const slash = key.lastIndexOf('/')
+  if (slash >= 0) {
+    const maybeDecimals = key.slice(slash + 1).trim()
+    if (/^\d+$/.test(maybeDecimals)) {
+      ref = key.slice(0, slash).trim()
+      decimals = Number(maybeDecimals)
+    }
+  }
+
+  const param = /^\d+$/.test(ref)
+    ? parameters[Number(ref)]
+    : byName.get(ref.toLowerCase())
+  if (!param || param.value === '') return null
+
+  if (decimals !== undefined && isNumericParam(param)) {
+    try {
+      return formatTokenAmount(param.value, decimals, decimals)
+    } catch {
+      return param.value
+    }
+  }
+
+  if (param.type === 'address' || /^0x[0-9a-fA-F]{40}$/.test(param.value)) {
+    return truncate(param.value)
+  }
+  return param.value
+}
+
+function isNumericParam(param: DecodedParam): boolean {
+  if (/^u?int/i.test(param.type)) return true
+  if (
+    param.type === 'bool' ||
+    param.type === 'address' ||
+    param.type.startsWith('bytes') ||
+    param.type.endsWith('[]')
+  ) {
+    return false
+  }
+  return /^-?\d+$/.test(param.value)
+}
+
+/**
+ * List/detail header: `protocol name - contract name - action` with parameters
+ * interpolated into the action template. Returns null when Harmonix extras are absent.
+ */
+export function formatDecodedTxHeader(decoded: DataDecoded, fallbackAction?: string): string | null {
+  const hasExtras = Boolean(decoded.protocolName || decoded.contractName || decoded.actionLabel)
+  if (!hasExtras) return null
+  const action = decoded.actionLabel
+    ? interpolateActionLabel(decoded.actionLabel, decoded.parameters)
+    : fallbackAction
+  const parts = [decoded.protocolName, decoded.contractName, action].filter(
+    (part): part is string => Boolean(part && part.trim()),
+  )
+  return parts.length > 0 ? parts.join(' - ') : null
+}
+
+/**
  * Produces a short human-readable description of a Safe transaction.
- * e.g. "Fulfill 3 withdrawal(s) — 1,000 USDT" or "Transfer 500 DAI to 0xABC…"
+ * Harmonix SUCCESS payloads: "HyperSwap - Router - Set Cap Vault to 0xABC…".
+ * Local / Safe decoder fallback: "Fulfill 3 withdrawal(s)" / "Transfer 500 DAI to 0xABC…".
  */
 export function summarizeDecodedData(
   decoded: DataDecoded | null,
@@ -204,6 +595,16 @@ export function summarizeDecodedData(
     return `Raw call to ${truncate(to)}`
   }
 
+  const methodSummary = summarizeDecodedMethod(decoded, to, vaultAssetMap, assetMetadata)
+  return formatDecodedTxHeader(decoded, methodSummary) ?? methodSummary
+}
+
+function summarizeDecodedMethod(
+  decoded: DataDecoded,
+  to: string,
+  vaultAssetMap?: Record<string, string>,
+  assetMetadata: Record<string, AssetMeta> = {},
+): string {
   const { method, parameters } = decoded
 
   if (method === 'multiSend') {
@@ -593,7 +994,13 @@ export function decodeUpgradeInnerData(bytesHex: string): DataDecoded | null {
           }))
         : []
 
-      return { method: functionName, parameters }
+      return {
+        method: functionName,
+        parameters,
+        abi:
+          stringifyAbiJson(funcEntry ? [funcEntry] : undefined) ??
+          synthesizeFunctionAbi(functionName, parameters),
+      }
     } catch {
       continue
     }
@@ -640,9 +1047,15 @@ export function decodeSubmitInnerData(bytesHex: string): DataDecoded | null {
             ? JSON.stringify(value.map(String))
             : String(value),
         }))
-      : []
+        : []
 
-    return { method: functionName, parameters }
+    return {
+      method: functionName,
+      parameters,
+      abi:
+        stringifyAbiJson(funcEntry ? [funcEntry] : undefined) ??
+        synthesizeFunctionAbi(functionName, parameters),
+    }
   } catch {
     return null
   }

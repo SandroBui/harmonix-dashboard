@@ -1,14 +1,11 @@
 import type { NextRequest } from 'next/server'
+import { SAFE_SHORT_NAMES } from '@/lib/safe/chains'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// chainId -> Safe Transaction Service shortName. Only 999 (HyperEVM) is used today;
-// extend this map as more chains are supported.
-const SHORT_NAMES: Record<string, string> = { '999': 'hyper' }
-
 function upstreamBase(chainId: string): string | null {
-  const shortName = SHORT_NAMES[chainId]
+  const shortName = SAFE_SHORT_NAMES[chainId]
   return shortName ? `https://api.safe.global/tx-service/${shortName}/api` : null
 }
 

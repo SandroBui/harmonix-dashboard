@@ -6,14 +6,15 @@ export async function proxy(request: NextRequest) {
   if (process.env.GOOGLE_AUTH !== "true") return NextResponse.next()
 
   const session = await auth()
+  const loggedIn = Boolean(session?.user?.email)
   const { pathname } = request.nextUrl
 
-  if (!session && pathname !== "/login") {
+  if (!loggedIn && pathname !== "/login") {
     const loginUrl = new URL("/login", request.url)
     return NextResponse.redirect(loginUrl)
   }
 
-  if (session && pathname === "/login") {
+  if (loggedIn && pathname === "/login") {
     return NextResponse.redirect(new URL("/", request.url))
   }
 
@@ -22,6 +23,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api/auth|api/logout|_next/static|_next/image|favicon.ico).*)",
   ],
 }

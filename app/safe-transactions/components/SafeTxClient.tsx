@@ -1,11 +1,20 @@
 'use client'
 
-import { usePendingSafeTransactions, useSafeInfo, useResolvedRoleSafes } from '@/lib/safe/hooks'
-import { getResolvedSafeAddressForRole } from '@/lib/safe/roles'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  useSingleSafeMultisigTxs,
+  useSingleSafePendingTxs,
+  MULTISIG_PAGE_SIZE,
+  type SafeTxTagging,
+} from '@/lib/safe/hooks'
 import type { RoleType } from '@/lib/safe/roles'
+import { getSafeChainLabel, safeAppQueueUrl } from '@/lib/safe/chains'
+import { getVaultSafeOptions } from '@/lib/safe/vault-safes'
 import { useVaultConfig } from '@/lib/vault-context'
-import type { PendingSafeTx, SafeInfo, RoleTaggedTx } from '@/lib/safe/types'
 import SafeTxList from './SafeTxList'
+import SafeTxLifecycleTabs, { type SafeTxLifecycleTab } from './SafeTxLifecycleTabs'
+import SafeWalletSelect from './SafeWalletSelect'
+import { useSafeSelection } from './use-safe-selection'
 
 /** Maps a decoded function name to the role required to execute it. */
 function inferRoleFromMethod(method: string | undefined): RoleType | null {
@@ -44,91 +53,117 @@ function inferRoleFromMethod(method: string | undefined): RoleType | null {
   }
 }
 
-// Hooks must be called unconditionally at the top level — one pair per role.
-function useAllRoleTxs(vaultAssetMap: Record<string, string>): {
-  txs: RoleTaggedTx[]
-  isLoading: boolean
-  hasError: boolean
-  refetchAll: () => void
-} {
-  const config = useVaultConfig()
-  const { data: resolved } = useResolvedRoleSafes()
-  const addrOperator          = getResolvedSafeAddressForRole(config, 'operator', resolved?.resolvedSafes)
-  const addrCurator           = getResolvedSafeAddressForRole(config, 'curator', resolved?.resolvedSafes)
-  const addrTimelockProposer  = getResolvedSafeAddressForRole(config, 'timelock_proposer', resolved?.resolvedSafes)
-  const addrAdmin             = getResolvedSafeAddressForRole(config, 'admin', resolved?.resolvedSafes)
+const EMPTY_MESSAGES: Record<SafeTxLifecycleTab, string> = {
+  pending: 'No pending Safe transactions.',
+  history: 'No Safe multisig transactions.',
+}
 
-  const qOperator          = usePendingSafeTransactions(addrOperator,          vaultAssetMap)
-  const qCurator           = usePendingSafeTransactions(addrCurator,           vaultAssetMap)
-  const qTimelockProposer  = usePendingSafeTransactions(addrTimelockProposer,  vaultAssetMap)
-  const qAdmin             = usePendingSafeTransactions(addrAdmin,             vaultAssetMap)
-
-  const sOperator          = useSafeInfo(addrOperator)
-  const sCurator           = useSafeInfo(addrCurator)
-  const sTimelockProposer  = useSafeInfo(addrTimelockProposer)
-  const sAdmin             = useSafeInfo(addrAdmin)
-
-  const isLoading = qOperator.isLoading || qCurator.isLoading || qTimelockProposer.isLoading || qAdmin.isLoading
-  const hasError  = Boolean(qOperator.error || qCurator.error || qTimelockProposer.error || qAdmin.error)
-
-  function refetchAll() {
-    qOperator.refetch()
-    qCurator.refetch()
-    qTimelockProposer.refetch()
-    qAdmin.refetch()
-  }
-
-  // Merge: deduplicate by safeTxHash, accumulate roles when same tx appears across roles
-  const entries: [RoleType, `0x${string}`, PendingSafeTx[] | undefined, SafeInfo | undefined][] = [
-    ['operator',           addrOperator,         qOperator.data          as PendingSafeTx[] | undefined, sOperator.data          as SafeInfo | undefined],
-    ['curator',            addrCurator,          qCurator.data           as PendingSafeTx[] | undefined, sCurator.data           as SafeInfo | undefined],
-    ['timelock_proposer',  addrTimelockProposer, qTimelockProposer.data  as PendingSafeTx[] | undefined, sTimelockProposer.data  as SafeInfo | undefined],
-    ['admin',              addrAdmin,            qAdmin.data             as PendingSafeTx[] | undefined, sAdmin.data             as SafeInfo | undefined],
-  ]
-
-  const merged = new Map<string, RoleTaggedTx>()
-  for (const [role, addr, txList, safeInfo] of entries) {
-    for (const tx of txList ?? []) {
-      if (merged.has(tx.safeTxHash)) continue // deduplicate — first Safe wins
-      // Infer the required role from the decoded function; fall back to the fetching role
-      const inferredRole = inferRoleFromMethod(tx.dataDecoded?.method) ?? role
-      merged.set(tx.safeTxHash, { ...tx, roles: [inferredRole], safeAddress: addr, safeInfo })
-    }
-  }
-
-  // Sort by nonce ascending so the queue reads naturally
-  const txs = Array.from(merged.values()).sort((a, b) => Number(a.nonce) - Number(b.nonce))
-
-  return { txs, isLoading, hasError, refetchAll }
+const INITIAL_TAB_PAGES: Record<SafeTxLifecycleTab, number> = {
+  pending: 1,
+  history: 1,
 }
 
 // ─── Root client component ────────────────────────────────────────────────────
 
 export default function SafeTxClient({ vaultAssetMap }: { vaultAssetMap: Record<string, string> }) {
-  const { txs, isLoading, hasError, refetchAll } = useAllRoleTxs(vaultAssetMap)
+  const config = useVaultConfig()
+  const safeOptions = useMemo(() => getVaultSafeOptions(config), [config])
+  const [selectedSafe, setSelectedSafe] = useSafeSelection(config.slug, safeOptions)
+  const [activeTab, setActiveTab] = useState<SafeTxLifecycleTab>('pending')
+  const [pages, setPages] = useState(INITIAL_TAB_PAGES)
+
+  const selectedOption = selectedSafe === null ? undefined : safeOptions[selectedSafe]
+  const safeAddress = selectedOption?.address
+  const safeChainId = selectedOption?.chainId ?? config.chainId
+  useEffect(() => {
+    setPages(INITIAL_TAB_PAGES)
+  }, [safeAddress, safeChainId])
+  // Signing needs the wallet, the Protocol Kit and the vault reads on one chain,
+  // so Safes configured on another chain stay read-only here.
+  const isOffVaultChain = safeChainId !== config.chainId
+  const tagging = useMemo<SafeTxTagging>(
+    () => ({ role: selectedOption?.role ?? null, inferRole: inferRoleFromMethod }),
+    [selectedOption],
+  )
+
+  const pending = useSingleSafePendingTxs(safeAddress, vaultAssetMap, tagging, {
+    chainId: safeChainId,
+    limit: pages.pending * MULTISIG_PAGE_SIZE,
+  })
+  const history = useSingleSafeMultisigTxs(safeAddress, vaultAssetMap, tagging, {
+    limit: pages.history * MULTISIG_PAGE_SIZE,
+    enabled: activeTab === 'history',
+    chainId: safeChainId,
+  })
+
+  const active = activeTab === 'pending' ? pending : history
+
+  function handleTabChange(tab: SafeTxLifecycleTab) {
+    setActiveTab(tab)
+  }
+
+  const count = active.txs.length
+  const plural = count === 1 ? '' : 's'
+  const subtitle =
+    activeTab === 'pending'
+      ? `pending transaction${plural}`
+      : `transaction${plural} in history`
 
   return (
     <div className="space-y-4">
+      <SafeTxLifecycleTabs
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        pendingCount={pending.count}
+      />
+
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-neutral-500">
-          {!isLoading && (
+          {selectedOption && !active.isLoading && (
             <>
-              <span className="font-medium text-neutral-900 dark:text-white">{txs.length}</span>{' '}
-              pending transaction{txs.length !== 1 ? 's' : ''} across all roles
+              <span className="font-medium text-neutral-900 dark:text-white">{count}</span>{' '}
+              {subtitle} on {selectedOption.label}
             </>
           )}
         </p>
-        <button
-          onClick={refetchAll}
-          className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-        >
-          Refresh all
-        </button>
+        <div className="flex items-center gap-3">
+          <SafeWalletSelect
+            options={safeOptions}
+            value={selectedSafe}
+            vaultChainId={config.chainId}
+            onChange={(value) => {
+              setSelectedSafe(value)
+              setPages(INITIAL_TAB_PAGES)
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => active.refetch()}
+            className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {/* Loading */}
-      {isLoading && (
+      {isOffVaultChain && selectedOption && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+          {selectedOption.label} lives on {getSafeChainLabel(safeChainId)}, not{' '}
+          {getSafeChainLabel(config.chainId)} — transactions are read-only here.{' '}
+          <a
+            href={safeAppQueueUrl(safeChainId, selectedOption.address) ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline"
+          >
+            Sign or execute in the Safe app
+          </a>
+          .
+        </div>
+      )}
+
+      {active.isLoading && (
         <div className="space-y-3">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-16 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
@@ -136,23 +171,56 @@ export default function SafeTxClient({ vaultAssetMap }: { vaultAssetMap: Record<
         </div>
       )}
 
-      {/* Error */}
-      {hasError && !isLoading && (
+      {active.hasError && !active.isLoading && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-          Failed to fetch some pending transactions. Check your Safe configuration.
+          Failed to fetch Safe transactions. Check your Safe configuration and Transaction Service.
         </div>
       )}
 
-      {/* Empty */}
-      {!isLoading && txs.length === 0 && (
+      {!active.isLoading && active.txs.length === 0 && !active.hasError && (
         <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-neutral-200 dark:border-neutral-700">
-          <p className="text-sm text-neutral-400">No pending Safe transactions.</p>
+          <p className="text-sm text-neutral-400">
+            {selectedOption
+              ? EMPTY_MESSAGES[activeTab]
+              : 'No Safe wallet configured for this vault.'}
+          </p>
         </div>
       )}
 
-      {/* Unified list */}
-      {!isLoading && txs.length > 0 && (
-        <SafeTxList transactions={txs} vaultAssetMap={vaultAssetMap} />
+      {!active.isLoading && active.txs.length > 0 && (
+        <SafeTxList
+          transactions={active.txs}
+          vaultAssetMap={vaultAssetMap}
+          mode={activeTab === 'pending' && !isOffVaultChain ? 'pending' : 'readonly'}
+          chainId={safeChainId}
+        />
+      )}
+
+      {active.isFetchingMore && (
+        <div className="space-y-3">
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-16 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
+          ))}
+        </div>
+      )}
+
+      {active.hasMore && !active.isLoading && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            disabled={active.isFetchingMore}
+            onClick={() => setPages((current) => ({ ...current, [activeTab]: current[activeTab] + 1 }))}
+            className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            {active.isFetchingMore && (
+              <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+            )}
+            {active.isFetchingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
       )}
     </div>
   )
