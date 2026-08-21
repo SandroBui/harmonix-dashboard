@@ -1,8 +1,14 @@
 import type { SafeMultisigConfirmationResponse } from '@safe-global/types-kit'
 import type { RoleType } from './roles'
 
-/** A pending Safe multisig transaction, enriched with decoded data */
-export type PendingSafeTx = {
+/** Lifecycle status bucket for Safe multisig txs (UI tabs). */
+export type SafeTxBucket = 'pending' | 'executed' | 'failed'
+
+/**
+ * A Safe multisig transaction enriched with decoded data and execution fields.
+ * Covers pending, executed, and failed rows from the Safe Transaction Service.
+ */
+export type SafeMultisigTx = {
   safeTxHash: string
   to: string
   value: string
@@ -15,13 +21,24 @@ export type PendingSafeTx = {
   confirmationsCount: number
   /** True when enough signatures have been collected to execute */
   isExecutable: boolean
-  /** Decoded calldata from Safe Transaction Service or local ABI fallback */
+  /** Decoded calldata from Harmonix decode API, Safe Transaction Service, or local ABI fallback */
   dataDecoded: DataDecoded | null
-  /** Human-readable one-line summary, e.g. "Fulfill 3 withdrawal(s) — 1,000 USDT" */
+  /** Human-readable one-line summary, e.g. "HyperSwap - Router - Set Cap Vault to 0xABC…" */
   summary: string
   /** Optional pre-check metadata for fulfillRedeem transactions */
   fulfillPrecheck?: FulfillPrecheck
+  /** Whether the Safe has executed this tx on-chain */
+  isExecuted: boolean
+  /** On-chain success flag; null when not yet executed */
+  isSuccessful: boolean | null
+  /** ISO timestamp when executed, if any */
+  executionDate: string | null
+  /** On-chain transaction hash after execution */
+  transactionHash: string | null
 }
+
+/** @deprecated Prefer SafeMultisigTx — alias kept for existing call sites */
+export type PendingSafeTx = SafeMultisigTx
 
 export type FulfillPrecheck = {
   fundVaultAddress: string
@@ -44,6 +61,12 @@ export type DataDecoded = {
    * plus a best-effort decoded form using known ABIs.
    */
   multiSendInner?: MultiSendInnerCall[]
+  /** JSON ABI fragment used to decode this call, when available. */
+  abi?: string
+  /** Harmonix decode envelope extras — render API fields instead of local ABI guesswork. */
+  protocolName?: string
+  contractName?: string
+  actionLabel?: string
 }
 
 export type MultiSendInnerCall = {
@@ -68,7 +91,7 @@ export type SafeInfo = {
   nonce: string | number
 }
 
-export type RoleTaggedTx = PendingSafeTx & {
+export type RoleTaggedTx = SafeMultisigTx & {
   roles: RoleType[]
   safeAddress: `0x${string}`
   safeInfo: SafeInfo | undefined

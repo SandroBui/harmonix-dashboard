@@ -3,8 +3,13 @@
 import type { DataDecoded } from '@/lib/safe/types'
 import type { AssetMeta } from '@/lib/vault-group-config'
 import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
-import { decodeSubmitInnerData, decodeUpgradeInnerData, resolveSelector } from '@/lib/safe/decoder'
+import {
+  decodeSubmitInnerData,
+  decodeUpgradeInnerData,
+  resolveSelector,
+} from '@/lib/safe/decoder'
 import { formatDenomination } from '@/lib/format'
+import CopyButton from '@/app/components/CopyButton'
 
 type Props = {
   decoded: DataDecoded | null
@@ -94,6 +99,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                           {call.data}
                         </code>
                       )}
+                      {call.decoded?.abi && <AbiBlock abi={call.decoded.abi} compact />}
                     </div>
                   ))}
                 </div>
@@ -124,6 +130,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                       </span>
                     </div>
                   ))}
+                  {innerDecoded.abi && <AbiBlock abi={innerDecoded.abi} compact />}
                 </div>
               </div>
             )
@@ -142,6 +149,26 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
           )
         })}
       </div>
+
+      {decoded.abi && <AbiBlock abi={decoded.abi} />}
+    </div>
+  )
+}
+
+function AbiBlock({ abi, compact = false }: { abi: string; compact?: boolean }) {
+  return (
+    <div className={compact ? 'mt-2' : 'mt-3 border-t border-neutral-200 pt-2 dark:border-neutral-700'}>
+      <div className="mb-1 flex items-center justify-between">
+        <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">ABI</p>
+        <CopyButton value={abi} className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300" />
+      </div>
+      <pre
+        className={`overflow-auto rounded bg-neutral-50 p-2 font-mono text-[11px] leading-relaxed text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300 ${
+          compact ? 'max-h-32' : 'max-h-56'
+        }`}
+      >
+        {abi}
+      </pre>
     </div>
   )
 }

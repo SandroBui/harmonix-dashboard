@@ -9,6 +9,11 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     haVaultReaderAddress: '0x6402EB27609eef6FE243fAB5909518C55cb8B644',
     safe: {
       default: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
+      strategyWallets: [
+        { name: 'Strategy 1', address: '0x1234567890123456789012345678901234567890' },
+        { name: 'Strategy 2', address: '0x1234567890123456789012345678901234567890' },
+        { name: 'Strategy 3', address: '0x1234567890123456789012345678901234567890' },
+      ],
     },
     version: 3,
   },
@@ -22,6 +27,11 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
       default: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       operator: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       admin: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
+      strategyWallets: [
+        { name: 'Strategy 1', address: '0xBb41072c1df45e623901C896816BF867d00E9637' },
+        { name: 'Strategy 2', address: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27' },
+        { name: 'Strategy 3', address: '0xE4E5557C7EB9075f51577898576496e46C47979c' },
+      ],
     },
     version: 2,
     fundContractAddress: '0x2cA5cF8EF7B35c2c7dF4D7C204A58c6F16d77291',
