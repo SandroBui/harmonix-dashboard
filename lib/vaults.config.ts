@@ -10,9 +10,7 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     safe: {
       default: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
       strategyWallets: [
-        { name: 'Strategy 1', address: '0x1234567890123456789012345678901234567890' },
-        { name: 'Strategy 2', address: '0x1234567890123456789012345678901234567890' },
-        { name: 'Strategy 3', address: '0x1234567890123456789012345678901234567890' },
+        { name: 'Strategy 1', address: '0x369691fBbE99e384a2Dd9CC86126E6F07724C8B8' },
       ],
     },
     version: 3,
@@ -28,9 +26,7 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
       operator: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       admin: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       strategyWallets: [
-        { name: 'Strategy 1', address: '0xBb41072c1df45e623901C896816BF867d00E9637' },
-        { name: 'Strategy 2', address: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27' },
-        { name: 'Strategy 3', address: '0xE4E5557C7EB9075f51577898576496e46C47979c' },
+        { name: 'Strategy 1', address: '0x369691fBbE99e384a2Dd9CC86126E6F07724C8B8' },
       ],
     },
     version: 2,
