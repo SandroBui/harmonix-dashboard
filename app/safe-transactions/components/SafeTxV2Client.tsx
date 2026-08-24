@@ -9,6 +9,7 @@ import {
 } from '@/lib/safe/hooks'
 import { getSafeChainLabel, safeAppQueueUrl } from '@/lib/safe/chains'
 import { inferV2RoleFromMethod } from '@/lib/safe/v2-safes'
+import { collapseRejectedSafeTxs } from '@/lib/safe/status'
 import { getVaultSafeOptions } from '@/lib/safe/vault-safes'
 import { useVaultConfig } from '@/lib/vault-context'
 import SafeTxList from './SafeTxList'
@@ -58,7 +59,11 @@ export default function SafeTxV2Client({ vaultAssetMap }: { vaultAssetMap: Recor
     chainId: safeChainId,
   })
 
-  const views = { pending, history }
+  const historyTxs = useMemo(
+    () => collapseRejectedSafeTxs(history.txs),
+    [history.txs],
+  )
+  const views = { pending, history: { ...history, txs: historyTxs } }
   const active = views[activeTab]
 
   function handleTabChange(tab: SafeTxLifecycleTab) {
