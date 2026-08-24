@@ -49,6 +49,10 @@ const STATUS_BADGE: Record<SafeTxBucket, { label: string; className: string }> =
     label: 'Failed',
     className: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
   },
+  cancelled: {
+    label: 'Cancelled',
+    className: 'bg-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300',
+  },
 }
 
 const HISTORY_STATUS: Record<SafeTxBucket, { label: string; className: string }> = {
@@ -63,6 +67,10 @@ const HISTORY_STATUS: Record<SafeTxBucket, { label: string; className: string }>
   failed: {
     label: 'Failed',
     className: 'text-red-600 dark:text-red-400',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    className: 'text-neutral-500 dark:text-neutral-400',
   },
 }
 
@@ -320,7 +328,7 @@ function SafeTxHistoryRow({ tx, index, isExpanded, onToggle, chainId }: HistoryR
       isExpanded={isExpanded}
       onToggle={onToggle}
       borderClassName={
-        rejection
+        rejection && !tx.isCancelled
           ? 'border-red-200 dark:border-red-900'
           : 'border-neutral-200 dark:border-neutral-700'
       }
@@ -331,7 +339,7 @@ function SafeTxHistoryRow({ tx, index, isExpanded, onToggle, chainId }: HistoryR
       <RowIndex index={index} />
       <span
         className={`min-w-0 flex-1 truncate text-sm font-medium ${
-          rejection
+          rejection && !tx.isCancelled
             ? 'text-red-600 dark:text-red-400'
             : 'text-neutral-900 dark:text-white'
         }`}

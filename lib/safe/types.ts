@@ -2,7 +2,7 @@ import type { SafeMultisigConfirmationResponse } from '@safe-global/types-kit'
 import type { RoleType } from './roles'
 
 /** Lifecycle status bucket for Safe multisig txs (UI tabs). */
-export type SafeTxBucket = 'pending' | 'executed' | 'failed'
+export type SafeTxBucket = 'pending' | 'executed' | 'failed' | 'cancelled'
 
 /**
  * A Safe multisig transaction enriched with decoded data and execution fields.
@@ -95,4 +95,6 @@ export type RoleTaggedTx = SafeMultisigTx & {
   roles: RoleType[]
   safeAddress: `0x${string}`
   safeInfo: SafeInfo | undefined
+  /** True when a same-nonce rejection was executed, cancelling this proposal. */
+  isCancelled?: boolean
 }

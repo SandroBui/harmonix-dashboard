@@ -9,6 +9,7 @@ import {
 } from '@/lib/safe/hooks'
 import type { RoleType } from '@/lib/safe/roles'
 import { getSafeChainLabel, safeAppQueueUrl } from '@/lib/safe/chains'
+import { collapseRejectedSafeTxs } from '@/lib/safe/status'
 import { getVaultSafeOptions } from '@/lib/safe/vault-safes'
 import { useVaultConfig } from '@/lib/vault-context'
 import SafeTxList from './SafeTxList'
@@ -96,7 +97,11 @@ export default function SafeTxClient({ vaultAssetMap }: { vaultAssetMap: Record<
     chainId: safeChainId,
   })
 
-  const active = activeTab === 'pending' ? pending : history
+  const historyTxs = useMemo(
+    () => collapseRejectedSafeTxs(history.txs),
+    [history.txs],
+  )
+  const active = activeTab === 'pending' ? pending : { ...history, txs: historyTxs }
 
   function handleTabChange(tab: SafeTxLifecycleTab) {
     setActiveTab(tab)
