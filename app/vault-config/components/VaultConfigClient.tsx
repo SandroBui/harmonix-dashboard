@@ -14,6 +14,7 @@ import { getVaultConfigData } from '@/lib/vault-config-reader'
 import { useVaultConfig } from '@/lib/vault-context'
 import type { AssetPriceBoundsEntry, VaultCapEntry, VaultConfigData } from '@/lib/vault-config-reader'
 import { useCountdown } from '@/lib/hooks/use-countdown'
+import StrategyWalletsSection from './StrategyWalletsSection'
 
 // ── Row definition ────────────────────────────────────────────────────────────
 
@@ -1103,6 +1104,7 @@ export default function VaultConfigClient() {
       </div>
 
       <Section title="Contract Addresses"    rows={CONTRACT_ADDRESS_ROWS} {...commonProps} />
+      <StrategyWalletsSection />
       <Section title="Fee Configuration"     rows={FEE_CONFIG_ROWS}       {...commonProps} />
 
       {/* NAV & Risk: static rows + per-AssetVault deposit caps */}

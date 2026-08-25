@@ -54,8 +54,8 @@ export default function RoleBanner({
   if (safeHasOperator && safeHasAdmin) {
     return (
       <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
-        ✓ Full NAV access — Operator Safe{' '}
-        <span className="font-mono font-medium">{puLabel}</span><CopyButton value={operatorSafe} /> and Admin Safe{' '}
+        ✓ Full NAV access — Safe{' '}
+        <span className="font-mono font-medium">{puLabel}</span><CopyButton value={operatorSafe} /> and Safe{' '}
         <span className="font-mono font-medium">{adminLabel}</span><CopyButton value={adminSafe} />.
         You are an owner and can propose transactions.
       </div>

@@ -1,10 +1,9 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { useState } from 'react'
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { wagmiConfig } from '@/lib/wagmi-config'
-import VaultProviderWrapper from './vault-provider-wrapper'
 
 function getErrorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined
@@ -62,9 +61,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <Suspense fallback={null}>
-          <VaultProviderWrapper>{children}</VaultProviderWrapper>
-        </Suspense>
+        {children}
       </QueryClientProvider>
     </WagmiProvider>
   )

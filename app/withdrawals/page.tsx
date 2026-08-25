@@ -1,6 +1,16 @@
+import { fetchAssetMetadataForAddresses } from '@/lib/asset-metadata'
+import {
+  getBalanceContractAddress,
+  getFundContractAddress,
+  getUnderlyingAssetAddress,
+} from '@/lib/nav-contract-targets'
 import { getWithdrawalsWindow, getVaultAssetMap } from '@/lib/vault-reader'
 import { resolveVaultFromParams } from '@/lib/resolve-vault'
+import { supportsCurrentVaultUI } from '@/lib/vault-version'
+import { parseWithdrawalsDaysParam } from '@/lib/withdrawals-v2-reader'
+import VaultVersionPlaceholder from '@/app/components/VaultVersionPlaceholder'
 import WithdrawalsClient from './components/WithdrawalsClient'
+import WithdrawalsV2Client from './components/WithdrawalsV2Client'
 import RefreshButton from './components/RefreshButton'
 
 export const dynamic = 'force-dynamic'
@@ -16,10 +26,34 @@ export default async function WithdrawalsPage({
 }) {
   const sp = await searchParams
   const config = resolveVaultFromParams(sp)
-
+  const days = parseWithdrawalsDaysParam(sp.days)
   const fulfillmentSeconds = Number(process.env.WITHDRAWAL_FULFILLMENT_SECONDS) || 3 * 86400
 
-  const days = sp.days === 'all' ? 0 : Number(sp.days ?? 7)
+  if (config.version === 2) {
+    const underlyingAssetAddress = getUnderlyingAssetAddress(config)
+    const metadata = await fetchAssetMetadataForAddresses([underlyingAssetAddress])
+    const underlyingMeta = metadata[underlyingAssetAddress.toLowerCase()]
+
+    return (
+      <main className="mx-auto max-w-7xl px-4 py-10">
+        <WithdrawalsV2Client
+          vaultSlug={config.slug}
+          vaultName={config.name}
+          days={days}
+          underlyingSymbol={underlyingMeta?.symbol ?? 'TOKEN'}
+          underlyingDecimals={underlyingMeta?.decimals ?? 18}
+          fundContractAddress={getFundContractAddress(config)}
+          balanceContractAddress={getBalanceContractAddress(config)}
+          fulfillmentSeconds={fulfillmentSeconds}
+        />
+      </main>
+    )
+  }
+
+  if (!supportsCurrentVaultUI(config)) {
+    return <VaultVersionPlaceholder vaultName={config.name} />
+  }
+
   const nowSec = Math.floor(Date.now() / 1000)
   const windowOpts =
     sp.from || sp.to

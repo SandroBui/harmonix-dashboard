@@ -1,10 +1,14 @@
 import {
   HA_VAULT_READER_ABI,
+  HA_VAULT_READER_V2_ABI,
   FUND_NAV_FEED_ABI,
+  FUND_CONTRACT_ABI,
   VAULT_MANAGER_ABI,
 } from './contracts'
 import { getPublicClient } from './client'
 import { fetchAssetMetadataForAddresses } from './asset-metadata'
+import { getFundContractAddress } from './nav-contract-targets'
+import { readVaultSettingV2 } from './vault-setting-v2'
 import type { VaultGroupConfig } from './vault-group-config'
 
 // ─── Serialisable output types (no bigints) ───────────────────────────────────
@@ -57,12 +61,14 @@ export type NavPageData = {
   storedPps: string
   lastNavUpdated: string // seconds timestamp as string
   // Fee context (from VaultManager)
-  managementFeeRate: string // WAD scale (1e18 = 100%/year)
-  performanceFeeRate: string // WAD scale (1e18 = 100%)
+  managementFeeRate: string // v3: WAD (1e18=100%); v2: whole-number percent (1=1%)
+  performanceFeeRate: string // v3: WAD; v2: whole-number percent
   lastManagementHarvest: string // seconds timestamp as string ("0" = never)
   lastPerformanceHarvest: string // seconds timestamp as string ("0" = never)
   highWatermark: string // PPS scale (1e18) — "0" means uninitialized
   feeReceiver: string // 0x... address
+  managementFeeReceiver?: string
+  performanceFeeReceiver?: string
   // Harvest previews (from HaVaultReader.previewHarvest*Fee)
   managementFeePreview: { feeAmount: string; sharesToMint: string }
   performanceFeePreview: { feeAmount: string; sharesToMint: string }
@@ -76,7 +82,148 @@ export type NavPageData = {
 
 // ─── Main fetch function ──────────────────────────────────────────────────────
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+type NavSnapshot = {
+  totalSupply: bigint
+  navDenomination: bigint
+  effNavDenomination: bigint
+  globalRedeemShares: bigint
+  assetTotalNavs: readonly bigint[]
+  assetEffNavDenoms: readonly bigint[]
+  ppsValue: bigint
+  isValidPps: boolean
+}
+
+const WAD = 10n ** 18n
+
+type VaultStateV2 = {
+  pricePerShare: bigint
+  withdrawPoolAmount: bigint
+  lastHarvestManagementFeeTime: bigint
+  lastHarvestPerformanceFeeTime: bigint
+  nav: bigint
+  deployedTimestamp: bigint
+  highWatermark: bigint
+  pendingWithdrawAmount: bigint
+  pendingWithdrawShares: bigint
+}
+
+async function readContractSafe<T>(
+  publicClient: ReturnType<typeof getPublicClient>,
+  params: Parameters<typeof publicClient.readContract>[0],
+  fallback: T,
+): Promise<T> {
+  try {
+    return (await publicClient.readContract(params)) as T
+  } catch {
+    return fallback
+  }
+}
+
+/** v2 vaults: fee + NAV snapshot via HA_VAULT_READER_V2_ABI (vault = fund contract). */
+async function getNavPageDataV2(config: VaultGroupConfig): Promise<NavPageData> {
+  const publicClient = getPublicClient()
+  const fundContractAddress = getFundContractAddress(config)
+  const { haVaultReaderAddress } = config
+  const vaultArg = fundContractAddress
+
+  const defaultState: VaultStateV2 = {
+    pricePerShare: 0n,
+    withdrawPoolAmount: 0n,
+    lastHarvestManagementFeeTime: 0n,
+    lastHarvestPerformanceFeeTime: 0n,
+    nav: 0n,
+    deployedTimestamp: 0n,
+    highWatermark: 0n,
+    pendingWithdrawAmount: 0n,
+    pendingWithdrawShares: 0n,
+  }
+
+  const [vaultSetting, vaultState, mgmtFeePreview, perfFeeAmount, totalSupply] = await Promise.all([
+    readVaultSettingV2(publicClient, haVaultReaderAddress, vaultArg),
+    readContractSafe(
+      publicClient,
+      {
+        address: haVaultReaderAddress,
+        abi: HA_VAULT_READER_V2_ABI,
+        functionName: 'getVaultState',
+        args: [vaultArg],
+      },
+      defaultState,
+    ),
+    readContractSafe(
+      publicClient,
+      {
+        address: haVaultReaderAddress,
+        abi: HA_VAULT_READER_V2_ABI,
+        functionName: 'getManagementFeeAmount',
+        args: [vaultArg],
+      },
+      [0n, 0n] as const,
+    ),
+    readContractSafe(
+      publicClient,
+      {
+        address: haVaultReaderAddress,
+        abi: HA_VAULT_READER_V2_ABI,
+        functionName: 'getPerformanceFeeAmount',
+        args: [vaultArg],
+      },
+      0n,
+    ),
+    readContractSafe(
+      publicClient,
+      {
+        address: fundContractAddress,
+        abi: FUND_CONTRACT_ABI,
+        functionName: 'totalSupply',
+      },
+      0n,
+    ),
+  ])
+
+  const pps = vaultState.pricePerShare
+  const perfSharesToMint = perfFeeAmount > 0n && pps > 0n ? (perfFeeAmount * WAD) / pps : 0n
+
+  return {
+    vaultManagerAddress: fundContractAddress.toLowerCase(),
+    fundNavFeedAddress: '',
+    liveNavDenomination: vaultState.nav.toString(),
+    liveEffNavDenomination: vaultState.nav.toString(),
+    livePpsValue: pps.toString(),
+    liveIsValidPps: pps > 0n,
+    effectiveSupply: totalSupply.toString(),
+    storedPps: pps.toString(),
+    lastNavUpdated: '0',
+    managementFeeRate: vaultSetting.managementFeeRate.toString(),
+    performanceFeeRate: vaultSetting.performanceFeeRate.toString(),
+    lastManagementHarvest: vaultState.lastHarvestManagementFeeTime.toString(),
+    lastPerformanceHarvest: vaultState.lastHarvestPerformanceFeeTime.toString(),
+    highWatermark: vaultState.highWatermark.toString(),
+    feeReceiver: vaultSetting.managementFeeReceiver.toLowerCase(),
+    managementFeeReceiver: vaultSetting.managementFeeReceiver.toLowerCase(),
+    performanceFeeReceiver: vaultSetting.performanceFeeReceiver.toLowerCase(),
+    managementFeePreview: {
+      feeAmount: mgmtFeePreview[0].toString(),
+      sharesToMint: mgmtFeePreview[1].toString(),
+    },
+    performanceFeePreview: {
+      feeAmount: perfFeeAmount.toString(),
+      sharesToMint: perfSharesToMint.toString(),
+    },
+    totalClaimableNav: '0',
+    totalPendingNav: '0',
+    assets: [],
+    fetchedAt: Date.now(),
+  }
+}
+
 export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageData> {
+  if (config.version === 2) {
+    return getNavPageDataV2(config)
+  }
+
   const publicClient = getPublicClient()
   const { haVaultReaderAddress } = config
 
@@ -114,16 +261,7 @@ export async function getNavPageData(config: VaultGroupConfig): Promise<NavPageD
       address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,
       functionName: 'getNavSnapshot',
-    }) as Promise<{
-      totalSupply: bigint
-      navDenomination: bigint
-      effNavDenomination: bigint
-      globalRedeemShares: bigint
-      assetTotalNavs: readonly bigint[]
-      assetEffNavDenoms: readonly bigint[]
-      ppsValue: bigint
-      isValidPps: boolean
-    }>,
+    }) as Promise<NavSnapshot>,
     publicClient.readContract({
       address: haVaultReaderAddress,
       abi: HA_VAULT_READER_ABI,

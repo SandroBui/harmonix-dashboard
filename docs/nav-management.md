@@ -28,7 +28,7 @@ Navigate to `/admin/nav`.
 
 ## Adding a NAV category
 
-1. Connect your wallet (must be an owner of the Admin Safe).
+1. Connect your wallet (must be an owner of the Safe).
 2. Click **Add Category** next to the asset.
 3. Enter a description (e.g. `HyperLiquid`) and click **Propose via Safe**.
 4. Complete signing at `/safe-transactions`.

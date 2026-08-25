@@ -5,9 +5,13 @@ import {
   VAULT_MANAGER_ABI,
 } from '@/lib/contracts'
 import { getPublicClient } from '@/lib/client'
+import { getEmergencyV2PageData } from '@/lib/emergency-v2-reader'
 import { resolveVaultFromParams } from '@/lib/resolve-vault'
+import { supportsCurrentVaultUI } from '@/lib/vault-version'
+import VaultVersionPlaceholder from '@/app/components/VaultVersionPlaceholder'
 import { getFundStatus } from '@/lib/status-reader'
 import EmergencyClient from './components/EmergencyClient'
+import EmergencyV2Client from './components/EmergencyV2Client'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,6 +53,40 @@ export default async function EmergencyPage({
   searchParams: Promise<{ vault?: string }>
 }) {
   const config = resolveVaultFromParams(await searchParams)
+  const isV2 = config.version === 2
+
+  if (!isV2 && !supportsCurrentVaultUI(config)) {
+    return <VaultVersionPlaceholder vaultName={config.name} />
+  }
+
+  if (isV2) {
+    let v2Data
+    try {
+      v2Data = await getEmergencyV2PageData(config)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      return (
+        <main className="mx-auto max-w-7xl px-4 py-10">
+          <h1 className="mb-6 text-2xl font-bold text-red-600 dark:text-red-400">
+            Emergency Actions
+          </h1>
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+            Failed to fetch on-chain data: {message}
+          </div>
+        </main>
+      )
+    }
+
+    return (
+      <main className="mx-auto max-w-7xl px-4 py-10">
+        <h1 className="mb-6 text-2xl font-bold text-red-600 dark:text-red-400">
+          Emergency Actions
+        </h1>
+        <EmergencyV2Client data={v2Data} />
+      </main>
+    )
+  }
+
   const { haVaultReaderAddress } = config
 
   const publicClient = getPublicClient()

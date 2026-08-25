@@ -387,7 +387,7 @@ export default function StrategyClient({ data }: Props) {
     const base = 'rounded-md px-4 py-2 text-sm font-medium transition-colors'
     const disabledStyle = `${base} bg-neutral-200 text-neutral-400 cursor-not-allowed dark:bg-neutral-700 dark:text-neutral-500`
 
-    // Timelock submit flow — uses admin Safe
+    // Timelock submit flow — uses Safe
     if (needsSubmit) {
       if (!isConnected) return { label: 'Connect wallet', disabled: true, className: disabledStyle, onClick: () => {} }
       if (isWrongChain) return { label: 'Wrong network', disabled: true, className: `${base} bg-amber-100 text-amber-600 cursor-not-allowed`, onClick: () => {} }

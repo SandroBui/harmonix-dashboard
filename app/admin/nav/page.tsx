@@ -1,7 +1,10 @@
 import type { Metadata } from 'next'
 import { getNavPageData } from '@/lib/nav-reader'
 import { resolveVaultFromParams } from '@/lib/resolve-vault'
+import { supportsCurrentVaultUI } from '@/lib/vault-version'
+import VaultVersionPlaceholder from '@/app/components/VaultVersionPlaceholder'
 import NavClient from './components/NavClient'
+import NavV2Client from './components/NavV2Client'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +19,11 @@ export default async function NavPage({
   searchParams: Promise<{ vault?: string }>
 }) {
   const config = resolveVaultFromParams(await searchParams)
+  const isV2 = config.version === 2
+  // v2 is allowed on this page; v3 and others still use the original gate.
+  if (!isV2 && !supportsCurrentVaultUI(config)) {
+    return <VaultVersionPlaceholder vaultName={config.name} />
+  }
   let data
 
   try {
@@ -36,7 +44,7 @@ export default async function NavPage({
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-10">
-      <NavClient data={data} />
+      {isV2 ? <NavV2Client data={data} /> : <NavClient data={data} />}
     </main>
   )
 }

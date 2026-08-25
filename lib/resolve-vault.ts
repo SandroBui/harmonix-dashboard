@@ -16,3 +16,8 @@ export function resolveVaultFromParams(
 ): VaultGroupConfig {
   return getVaultGroupOrDefault(params?.vault)
 }
+
+/** Safe transactions page scoped to the active vault (v2 multi-vault routing). */
+export function safeTransactionsHref(vaultSlug: string): string {
+  return `/safe-transactions?vault=${encodeURIComponent(vaultSlug)}`
+}

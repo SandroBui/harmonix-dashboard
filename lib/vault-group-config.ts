@@ -1,3 +1,15 @@
+export type StrategyWallet = {
+  /** Human-readable strategy name shown on /vault-config */
+  name: string
+  /** Safe multisig address running this strategy */
+  address: `0x${string}`
+  /**
+   * Chain this Safe lives on; defaults to the vault's `chainId`. Must be listed
+   * in `lib/safe/chains.ts` for the dashboard to reach its Transaction Service.
+   */
+  chainId?: number
+}
+
 export type SafeAddresses = {
   /** Default Safe (fallback for all roles) */
   default: `0x${string}`
@@ -7,6 +19,8 @@ export type SafeAddresses = {
   admin?: `0x${string}`
   /** Timelock proposer Safe */
   timelockProposer?: `0x${string}`
+  /** Safes running strategies for this vault (display-only) */
+  strategyWallets?: StrategyWallet[]
 }
 
 export type AssetMeta = {
@@ -33,4 +47,20 @@ export type VaultGroupConfig = {
   assetMetadata?: Record<string, AssetMeta>
   /** Safe multisig addresses for this vault group */
   safe: SafeAddresses
+  /** Vault version */
+  version: number
+  /** v2: fund contract for NAV reads and updateNav propose */
+  fundContractAddress?: `0x${string}`
+  /** v2: underlying asset address for NAV reads */
+  underlyingAssetAddress?: `0x${string}`
+  /** v2: balance contract for executeAction (token approve, etc.) */
+  balanceContractAddress?: `0x${string}`
+  /** v2: perp NAV contract for role management */
+  perpNavContractAddress?: `0x${string}`
+  /** v2: fund admin manager contract for role management */
+  fundAdminManagerContractAddress?: `0x${string}`
+  /** v2: optional ProxyAdmin for Fund Admin Manager when EIP-1967 admin slot is empty */
+  fundAdminManagerProxyAdminAddress?: `0x${string}`
+  /** v2: OpenZeppelin TimelockController for upgrades */
+  timelockControllerAddress?: `0x${string}`
 }
