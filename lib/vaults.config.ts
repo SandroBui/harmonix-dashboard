@@ -24,8 +24,6 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     haVaultReaderAddress: '0x496D50AC1b149e0af4116aB021153c2a646F2f40',
     safe: {
       default: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
-      operator: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
-      admin: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       strategyWallets: [
         { name: 'HYPE-main', address: '0xc0Ca1e04FD623a8F165c80e7baD7bcfdC4d81f66' },
         { name: 'HYPE-loop', address: '0xBA8F3A35427a599AB08CeA933a40DA1092fb56Ce' },
@@ -49,8 +47,6 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     haVaultReaderAddress: '0x496D50AC1b149e0af4116aB021153c2a646F2f40',
     safe: {
       default: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
-      operator: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
-      admin: '0x3Aa399A1863751dD1CdB44Df2E3324d3003b6D27',
       strategyWallets: [
         { name: 'KHYPE-main', address: '0xe9A0b34285Bcf33512931b4Eb8Aad84153F126E5' },
         { name: 'KHYPE-loop', address: '0x177D7A127fDE8C84DbD8Dd9BE07cf9F818520ee0' },
@@ -58,10 +54,10 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
       ],
     },
     version: 2,
-    fundContractAddress: '0x2cA5cF8EF7B35c2c7dF4D7C204A58c6F16d77291',
-    underlyingAssetAddress: '0xA47f8e1520b0a7D7474734e5c7e405114baB518d',
-    balanceContractAddress: '0x8bf477eAAb88E083c1c7B1A6791fC73EDec2d4EB',
-    perpNavContractAddress: '0x15D21B1C017fC5101907f430e9BD925AcdB176B2',
+    fundContractAddress: '0x1368Ee9d1212AE5B26Ff166049220051a9EEbc42',
+    underlyingAssetAddress: '0xfd739d4e423301ce9385c1fb8850539d657c296d',
+    balanceContractAddress: '0xCda71089Bdc5c7D6EAfafe304902629Ed75C1642',
+    perpNavContractAddress: '0xcbd7d9f19F483aED7fFE4a031a2cE31501045BC4',
     fundAdminManagerContractAddress: '0x65D389daEa19fC9a704b17a81F953d70cEAa5D34',
     timelockControllerAddress: '0x8290eF21817924C2b7790886D81c766515a8bc82',
   },
