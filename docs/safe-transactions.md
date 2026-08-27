@@ -17,7 +17,7 @@ The header shows the active vault's **network** from `config.chainId` via the ma
 
 ## Safe wallet selector
 
-The toolbar has a **Safe wallet** dropdown, compiled from the active vault's `safe` block in `lib/vaults.config.ts` — role Safes (Default / Operator / Curator / Admin / Timelock Proposer) plus every entry in `safe.strategyWallets`. Each configured entry is listed, so several labels may point at the same address.
+The toolbar has a **Safe wallet** dropdown, compiled from the active vault's `safe` block in `lib/vaults.config.ts` — role Safes (Default / Operator / Curator / Admin / Upgrader / Timelock Proposer) plus every entry in `safe.strategyWallets`. Each configured entry is listed, so several labels may point at the same address. Only roles that have an address on the vault config appear.
 
 Exactly one Safe is shown at a time. The tabs always query the Transaction Service for **that Safe's chain only** (`strategyWallets[].chainId`, or the vault `chainId` when omitted) — never another deployment that happens to share the address.
 
@@ -46,7 +46,7 @@ Expanded detail shows decoded method/params, then metadata: **To** is `protocol 
 | **Confirmation count** | Signed vs required | Expanded detail |
 | **Execution time / tx hash** | When available | Time on row; hash in expanded detail |
 
-Expand a card for decoded calldata (Harmonix decode API → Safe Transaction Service decoder → local ABI fallback → `multiSend` inner expand). Harmonix SUCCESS payloads use `function.name` plus a `parameters` object (not a Safe-style `{ method, parameters[] }`); the dashboard maps that envelope as-is. ABI JSON is shown when the decoder returns `abi`. Unknown calldata shows raw hex.
+Expand a card for decoded calldata (Harmonix decode API → Safe Transaction Service decoder → local ABI fallback → `multiSend` inner expand). Harmonix SUCCESS payloads use `function.name` plus a `parameters` object (not a Safe-style `{ method, parameters[] }`); the dashboard maps that envelope as-is. Harmonix `UNKNOWN_ABI` (HTTP 200 with no function) still falls through to the Safe data-decoder and local ABIs — that covers Safe self-calls such as `changeThreshold`. Unknown calldata shows raw hex.
 
 ## Status badges
 

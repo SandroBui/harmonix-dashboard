@@ -6,14 +6,14 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     name: 'Hip-3 haUSDC Vault',
     description: 'Harmonix haUSDC vault on HyperEVM',
     chainId: 999,
-    haVaultReaderAddress: '0x93703f65b7B19548eaE3A3d2fD16a083AeC864d2',
+    haVaultReaderAddress: '0x6402EB27609eef6FE243fAB5909518C55cb8B644',
     safe: {
       default: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
       admin: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
       curator: '0x21019Cd46FD33243B5C5Dde88312B5fBDa11b38C',
       operator: '0xD15Dc51eeE6F0fE8bEb7b7F6E75260c8c37BdfbB',
+      upgrader: '0xC47AD9220B6408Cd8D612e1cA12c4B01a9Fab62D',
       strategyWallets: [
-        { name: 'Upgrade Safe', address: '0xC47AD9220B6408Cd8D612e1cA12c4B01a9Fab62D' },
         { name: 'HIP3-pendle', address: '0x0e05f0098778373e93f7128928FF25D77085f2cc' },
         { name: 'HIP3-buffer', address: '0xfe26Ea4277275761039643fC53F340710DD52Ae1' },
       ],

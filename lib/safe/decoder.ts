@@ -7,6 +7,7 @@ import { ROLE_HASHES, ROLE_LABELS } from './roles'
 import { V2_ENCODED_ROLE_HASHES, V2_ENCODED_ROLE_LABELS } from '@/lib/v2-role-hashes'
 import { getApiKit } from './api-kit'
 import { formatDenomination, formatTokenAmount } from '@/lib/format'
+import { nativeTokenSymbol } from '@/lib/networks'
 import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
@@ -50,7 +51,7 @@ export function resolveSelector(selector: string): string {
  *  2. Safe Transaction Service data-decoder endpoint (broad ABI coverage)
  *  3. Local known ABIs (vault + ERC-20)
  *
- * Returns null when decoding is not possible (e.g. raw ETH transfer).
+ * Returns null when decoding is not possible (e.g. raw native-token transfer).
  *
  * When the call is a Safe `multiSend(bytes)`, the returned `DataDecoded` is
  * augmented with `multiSendInner` — one entry per inner call. Prefer inner
@@ -88,7 +89,10 @@ export async function decodeTransactionData(
   const pending = decodeTransactionDataUncached(data, to, context)
   if (hashKey) decodeBySafeTxHash.set(hashKey, pending)
   try {
-    return await pending
+    const result = await pending
+    // Do not cache a miss — UNKNOWN_ABI today may decode after fallback/ABI updates.
+    if (!result && hashKey) decodeBySafeTxHash.delete(hashKey)
+    return result
   } catch (error) {
     if (hashKey) decodeBySafeTxHash.delete(hashKey)
     throw error
@@ -104,10 +108,11 @@ async function decodeTransactionDataUncached(
 
   let decoded: DataDecoded | null = null
   const harmonix = await decodeViaHarmonixApi(data, to, context)
-  if (harmonix.ok) {
-    // Harmonix HTTP 200 is authoritative — do not hit Safe data-decoder.
-    decoded = harmonix.decoded ?? decodeLocally(data)
+  if (harmonix.ok && harmonix.decoded) {
+    // Harmonix SUCCESS (mapped method) is authoritative.
+    decoded = harmonix.decoded
   } else {
+    // HTTP error, UNKNOWN_ABI, or an unmapped 200 — try Safe then local ABIs.
     try {
       const apiKit = getApiKit(chainId ?? 999)
       decoded = await apiKit.decodeData(data, to) as DataDecoded
@@ -414,6 +419,7 @@ function decodeLocally(data: string): DataDecoded | null {
     HA_TIME_LOCK_ABI,
     PERP_NAV_CONTRACT_ABI,
     ERC20_ABI,
+    SAFE_MANAGEMENT_ABI,
   ] as const
 
   for (const abi of knownAbis) {
@@ -586,16 +592,17 @@ export function summarizeDecodedData(
   value: string,
   vaultAssetMap?: Record<string, string>,
   assetMetadata: Record<string, AssetMeta> = {},
+  chainId?: number,
 ): string {
   if (!decoded) {
     if (value !== '0' && value !== '') {
-      const eth = Number(BigInt(value)) / 1e18
-      return `Transfer ${eth} ETH to ${truncate(to)}`
+      const amount = formatTokenAmount(value, 18)
+      return `Transfer ${amount} ${nativeTokenSymbol(chainId)} to ${truncate(to)}`
     }
     return `Raw call to ${truncate(to)}`
   }
 
-  const methodSummary = summarizeDecodedMethod(decoded, to, vaultAssetMap, assetMetadata)
+  const methodSummary = summarizeDecodedMethod(decoded, to, vaultAssetMap, assetMetadata, chainId)
   return formatDecodedTxHeader(decoded, methodSummary) ?? methodSummary
 }
 
@@ -604,6 +611,7 @@ function summarizeDecodedMethod(
   to: string,
   vaultAssetMap?: Record<string, string>,
   assetMetadata: Record<string, AssetMeta> = {},
+  chainId?: number,
 ): string {
   const { method, parameters } = decoded
 
@@ -662,7 +670,7 @@ function summarizeDecodedMethod(
       parameters.find((p) => p.name === '_data' || p.name === 'data')?.value ?? ''
     const inner = decodeLocally(innerBytes)
     if (inner) {
-      const innerSummary = summarizeDecodedData(inner, target, '0', vaultAssetMap, assetMetadata)
+      const innerSummary = summarizeDecodedData(inner, target, '0', vaultAssetMap, assetMetadata, chainId)
       return `executeAction → ${innerSummary}`
     }
     return `executeAction on ${truncate(target)}`
@@ -917,6 +925,30 @@ function summarizeDecodedMethod(
     return `Cancel pending ${roleLabel} grant`
   }
 
+  if (method === 'changeThreshold') {
+    const threshold =
+      parameters.find((p) => p.name === '_threshold' || p.name === 'threshold')?.value ?? '?'
+    return `Change Safe threshold → ${threshold}`
+  }
+
+  if (method === 'addOwnerWithThreshold') {
+    const owner = parameters.find((p) => p.name === 'owner')?.value ?? ''
+    const threshold =
+      parameters.find((p) => p.name === '_threshold' || p.name === 'threshold')?.value ?? '?'
+    return `Add Safe owner ${truncate(owner)} (threshold ${threshold})`
+  }
+
+  if (method === 'removeOwner') {
+    const owner = parameters.find((p) => p.name === 'owner')?.value ?? ''
+    return `Remove Safe owner ${truncate(owner)}`
+  }
+
+  if (method === 'swapOwner') {
+    const oldOwner = parameters.find((p) => p.name === 'oldOwner')?.value ?? ''
+    const newOwner = parameters.find((p) => p.name === 'newOwner')?.value ?? ''
+    return `Swap Safe owner ${truncate(oldOwner)} → ${truncate(newOwner)}`
+  }
+
   // Generic fallback
   return `${method}(${parameters.map((p) => p.name).join(', ')})`
 }
@@ -1122,6 +1154,52 @@ const ERC20_ABI = [
       { name: 'amount', type: 'uint256' },
     ],
     outputs: [{ type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+// ---------------------------------------------------------------------------
+// Gnosis Safe owner / threshold methods (Harmonix often returns UNKNOWN_ABI)
+// ---------------------------------------------------------------------------
+
+const SAFE_MANAGEMENT_ABI = [
+  {
+    name: 'changeThreshold',
+    type: 'function',
+    inputs: [{ name: '_threshold', type: 'uint256' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    name: 'addOwnerWithThreshold',
+    type: 'function',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: '_threshold', type: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    name: 'removeOwner',
+    type: 'function',
+    inputs: [
+      { name: 'prevOwner', type: 'address' },
+      { name: 'owner', type: 'address' },
+      { name: '_threshold', type: 'uint256' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    name: 'swapOwner',
+    type: 'function',
+    inputs: [
+      { name: 'prevOwner', type: 'address' },
+      { name: 'oldOwner', type: 'address' },
+      { name: 'newOwner', type: 'address' },
+    ],
+    outputs: [],
     stateMutability: 'nonpayable',
   },
 ] as const

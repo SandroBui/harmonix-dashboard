@@ -41,6 +41,11 @@ export function getNetworkName(chainId: number): string {
   return BY_CHAIN_ID.get(chainId)?.name ?? `Chain ${chainId}`
 }
 
+/** Native gas token: HYPE on HyperEVM, ETH on every other chain the dashboard lists. */
+export function nativeTokenSymbol(chainId: number | undefined): string {
+  return chainId === 999 ? 'HYPE' : 'ETH'
+}
+
 export function explorerTxUrl(chainId: number, txHash: string): string | null {
   const network = BY_CHAIN_ID.get(chainId)
   return network ? `${network.explorer}/tx/${txHash}` : null

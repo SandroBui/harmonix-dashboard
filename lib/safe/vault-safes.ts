@@ -23,6 +23,7 @@ const ROLE_SAFE_FIELDS: {
   { key: 'operator', label: `${ROLE_LABELS.operator} Safe`, role: 'operator' },
   { key: 'curator', label: `${ROLE_LABELS.curator} Safe`, role: 'curator' },
   { key: 'admin', label: `${ROLE_LABELS.admin} Safe`, role: 'admin' },
+  { key: 'upgrader', label: `${ROLE_LABELS.upgrader} Safe`, role: 'upgrader' },
   { key: 'timelockProposer', label: `${ROLE_LABELS.timelock_proposer} Safe`, role: 'timelock_proposer' },
 ]
 

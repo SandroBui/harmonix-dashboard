@@ -17,7 +17,7 @@ export type SafeAddresses = {
   operator?: `0x${string}`
   curator?: `0x${string}`
   admin?: `0x${string}`
-  upgrade?: `0x${string}`
+  upgrader?: `0x${string}`
   /** Timelock proposer Safe */
   timelockProposer?: `0x${string}`
   /** Safes running strategies for this vault (display-only) */

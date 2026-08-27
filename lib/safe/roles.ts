@@ -60,7 +60,7 @@ const ROLE_TO_SAFE_KEY: Record<RoleType, Exclude<keyof SafeAddresses, 'strategyW
   admin: 'admin',
   sentinel: 'admin',
   upgrade_executor: 'admin',
-  upgrader: 'admin',
+  upgrader: 'upgrader',
 }
 
 /** Returns the default Safe address for a vault group. */
