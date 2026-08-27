@@ -6,7 +6,7 @@ export const VAULT_GROUPS: VaultGroupConfig[] = [
     name: 'Hip-3 haUSDC Vault',
     description: 'Harmonix haUSDC vault on HyperEVM',
     chainId: 999,
-    haVaultReaderAddress: '0x6402EB27609eef6FE243fAB5909518C55cb8B644',
+    haVaultReaderAddress: '0x93703f65b7B19548eaE3A3d2fD16a083AeC864d2',
     safe: {
       default: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
       admin: '0x239499551fb5C0Ed8306C8897F9ed428dF2d055a',
