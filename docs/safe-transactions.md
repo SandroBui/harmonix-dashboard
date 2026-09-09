@@ -46,7 +46,7 @@ Expanded detail shows decoded method/params, then metadata: **To** is `protocol 
 | **Confirmation count** | Signed vs required | Expanded detail |
 | **Execution time / tx hash** | When available | Time on row; hash in expanded detail |
 
-Expand a card for decoded calldata (Harmonix decode API → Safe Transaction Service decoder → local ABI fallback → `multiSend` inner expand). Harmonix SUCCESS payloads use `function.name` plus a `parameters` object (not a Safe-style `{ method, parameters[] }`); the dashboard maps that envelope as-is. Harmonix `UNKNOWN_ABI` (HTTP 200 with no function) still falls through to the Safe data-decoder and local ABIs — that covers Safe self-calls such as `changeThreshold`. Unknown calldata shows raw hex.
+Expand a card for decoded calldata (Harmonix decode API → Safe Transaction Service decoder → local ABI fallback → `multiSend` inner expand). Harmonix SUCCESS payloads use `function.name` plus a `parameters` object (not a Safe-style `{ method, parameters[] }`); the dashboard maps that envelope as-is. Amount params are shown as returned (already decimal-scaled; no token symbol appended). Harmonix `UNKNOWN_ABI` (HTTP 200 with no function) still falls through to the Safe data-decoder and local ABIs — that covers Safe self-calls such as `changeThreshold`. Unknown calldata shows raw hex.
 
 ## Status badges
 

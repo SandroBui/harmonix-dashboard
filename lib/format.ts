@@ -32,6 +32,19 @@ export function formatTokenAmount(
 }
 
 /**
+ * Format an already decimal-scaled amount for display: `10000.23` → `10,000.23`.
+ * Does not divide by token decimals.
+ */
+export function formatDisplayAmount(value: string): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return value
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  })
+}
+
+/**
  * Format a denomination amount (1e18 scale, USD-pegged) with a $ prefix.
  *
  * @param value   Raw integer string at 1e18 scale

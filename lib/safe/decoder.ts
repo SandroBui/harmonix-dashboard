@@ -8,7 +8,7 @@ import { V2_ENCODED_ROLE_HASHES, V2_ENCODED_ROLE_LABELS } from '@/lib/v2-role-ha
 import { getApiKit } from './api-kit'
 import { formatDenomination, formatTokenAmount } from '@/lib/format'
 import { nativeTokenSymbol } from '@/lib/networks'
-import type { DataDecoded, DecodedParam, MultiSendInnerCall } from './types'
+import type { DataDecoded, DecodedParam, DecodedToken, MultiSendInnerCall } from './types'
 
 // Reverse map: role hash → label
 const ROLE_HASH_TO_LABEL: Record<string, string> = Object.fromEntries(
@@ -310,6 +310,25 @@ function mapParameters(parameters: unknown): DecodedParam[] {
   return []
 }
 
+function mapTokens(value: unknown): DecodedToken[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  const tokens: DecodedToken[] = []
+  for (const item of value) {
+    if (!isRecord(item)) continue
+    const address = typeof item.address === 'string' ? item.address : ''
+    const symbol = typeof item.symbol === 'string' && item.symbol ? item.symbol : undefined
+    let decimals: number | undefined
+    if (typeof item.decimals === 'number' && Number.isFinite(item.decimals)) {
+      decimals = item.decimals
+    } else if (typeof item.decimals === 'string' && /^\d+$/.test(item.decimals)) {
+      decimals = Number(item.decimals)
+    }
+    if (!address && !symbol && decimals === undefined) continue
+    tokens.push({ address, symbol, decimals })
+  }
+  return tokens.length > 0 ? tokens : undefined
+}
+
 function mapDecodedObject(obj: Record<string, unknown>): DataDecoded | null {
   const method = methodFromObject(obj)
   if (!method) return null
@@ -330,6 +349,7 @@ function mapDecodedObject(obj: Record<string, unknown>): DataDecoded | null {
       (typeof action?.type === 'string' && action.type) ||
       (typeof obj.action === 'string' && obj.action) ||
       undefined,
+    tokens: mapTokens(obj.tokens),
   }
 
   const inner = mapMultiSendInner(
@@ -581,6 +601,18 @@ export function formatDecodedTxHeader(decoded: DataDecoded, fallbackAction?: str
   return parts.length > 0 ? parts.join(' - ') : null
 }
 
+function tokenMetaFromDecoded(
+  tokens: DecodedToken[] | undefined,
+  to: string,
+): { symbol: string; decimals: number } | undefined {
+  if (!tokens?.length) return undefined
+  const match =
+    tokens.find((t) => t.address.toLowerCase() === to.toLowerCase() && t.decimals != null) ??
+    tokens.find((t) => t.decimals != null)
+  if (match?.decimals == null) return undefined
+  return { symbol: match.symbol ?? '', decimals: match.decimals }
+}
+
 /**
  * Produces a short human-readable description of a Safe transaction.
  * Harmonix SUCCESS payloads: "HyperSwap - Router - Set Cap Vault to 0xABC…".
@@ -650,9 +682,11 @@ function summarizeDecodedMethod(
   if (method === 'transfer') {
     const recipient = parameters.find((p) => p.name === 'to')
     const amount = parameters.find((p) => p.name === 'amount' || p.name === 'value')
-    const assetMeta = assetMetadata[to.toLowerCase()]
-    const formatted = assetMeta && amount
-      ? formatAmount(amount.value, assetMeta.decimals) + ' ' + assetMeta.symbol
+    const token =
+      assetMetadata[to.toLowerCase()] ??
+      tokenMetaFromDecoded(decoded.tokens, to)
+    const formatted = token && amount
+      ? `${formatTokenAmount(amount.value, token.decimals, token.decimals)} ${token.symbol}`
       : (amount?.value ?? '?')
     return `Transfer ${formatted} to ${truncate(recipient?.value ?? '')}`
   }
@@ -1114,21 +1148,6 @@ function formatDuration(seconds: number): string {
   if (m) parts.push(`${m}m`)
   if (s || parts.length === 0) parts.push(`${s}s`)
   return parts.join(' ')
-}
-
-function formatAmount(raw: string, decimals: number): string {
-  try {
-    const bn = BigInt(raw)
-    if (bn === 0n) return '0'
-    const divisor = 10n ** BigInt(decimals)
-    const whole = bn / divisor
-    const frac = bn % divisor
-    if (frac === 0n) return whole.toLocaleString()
-    const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '').slice(0, 4)
-    return `${whole.toLocaleString()}.${fracStr}`
-  } catch {
-    return raw
-  }
 }
 
 // ---------------------------------------------------------------------------

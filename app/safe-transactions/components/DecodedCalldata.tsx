@@ -1,14 +1,12 @@
 'use client'
 
-import type { DataDecoded } from '@/lib/safe/types'
-import type { AssetMeta } from '@/lib/vault-group-config'
-import { useAssetMetadata } from '@/lib/hooks/use-asset-metadata'
+import type { DataDecoded, DecodedParam } from '@/lib/safe/types'
 import {
   decodeSubmitInnerData,
   decodeUpgradeInnerData,
   resolveSelector,
 } from '@/lib/safe/decoder'
-import { formatDenomination } from '@/lib/format'
+import { formatDenomination, formatDisplayAmount } from '@/lib/format'
 
 type Props = {
   decoded: DataDecoded | null
@@ -16,8 +14,7 @@ type Props = {
   to: string
 }
 
-export default function DecodedCalldata({ decoded, rawData, to }: Props) {
-  const { data: assetMetadata } = useAssetMetadata()
+export default function DecodedCalldata({ decoded, rawData }: Props) {
 
   if (!decoded) {
     return (
@@ -61,7 +58,9 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                   <span className="ml-1 text-neutral-400 dark:text-neutral-500">({decoded.multiSendInner.length} calls)</span>
                 </span>
                 <div className="min-w-0 flex-1 space-y-2">
-                  {decoded.multiSendInner.map((call, k) => (
+                  {decoded.multiSendInner.map((call, k) => {
+                    const innerCallDecoded = call.decoded
+                    return (
                     <div
                       key={k}
                       className="rounded border border-neutral-300 bg-neutral-50 p-2 dark:border-neutral-700 dark:bg-neutral-900"
@@ -69,7 +68,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                       <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs">
                         <span className="font-semibold text-neutral-700 dark:text-neutral-200">#{k + 1}</span>
                         <span className="text-neutral-800 dark:text-neutral-100">
-                          {call.decoded?.method ?? '(unknown)'}
+                          {innerCallDecoded?.method ?? '(unknown)'}
                           <span className="ml-1 text-neutral-400">()</span>
                         </span>
                         <span className="text-neutral-400 dark:text-neutral-500">
@@ -79,16 +78,16 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                           <span className="text-neutral-400 dark:text-neutral-500">value {call.value}</span>
                         )}
                       </div>
-                      {call.decoded ? (
+                      {innerCallDecoded ? (
                         <div className="space-y-1">
-                          {call.decoded.parameters.map((inner, j) => (
+                          {innerCallDecoded.parameters.map((inner, j) => (
                             <div key={j} className="flex items-start gap-2 text-xs">
                               <span className="w-28 shrink-0 break-words text-neutral-500 dark:text-neutral-400">
                                 {inner.name}
                                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                               </span>
                               <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                                {formatParamValue(inner.value, inner.name, inner.type, call.to, assetMetadata)}
+                                {formatParamValue(inner)}
                               </span>
                             </div>
                           ))}
@@ -99,7 +98,8 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                         </code>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )
@@ -124,7 +124,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                         <span className="ml-1 text-neutral-400 dark:text-neutral-500">({inner.type})</span>
                       </span>
                       <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                        {formatParamValue(inner.value, inner.name, inner.type, to, assetMetadata)}
+                        {formatParamValue(inner)}
                       </span>
                     </div>
                   ))}
@@ -140,7 +140,7 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
                 <span className="ml-1 text-neutral-400 dark:text-neutral-500">({param.type})</span>
               </span>
               <span className="min-w-0 flex-1 break-all font-mono text-neutral-700 dark:text-neutral-300">
-                {formatParamValue(param.value, param.name, param.type, to, assetMetadata)}
+                {formatParamValue(param)}
               </span>
             </div>
           )
@@ -150,45 +150,33 @@ export default function DecodedCalldata({ decoded, rawData, to }: Props) {
   )
 }
 
-function formatParamValue(value: string, paramName: string, type: string, to: string, assetMetadata?: Record<string, AssetMeta>): string {
-  if (type === 'bytes4') {
-    const fnName = resolveSelector(value)
-    if (fnName !== value) return `${value} (${fnName})`
-    return value
+function isAmountParamName(name: string): boolean {
+  const n = name.replace(/^_+/, '').toLowerCase()
+  return n === 'amount' || n.endsWith('amount') || n === 'value'
+}
+
+function formatParamValue(param: DecodedParam): string {
+  if (param.type === 'bytes4') {
+    const fnName = resolveSelector(param.value)
+    if (fnName !== param.value) return `${param.value} (${fnName})`
+    return param.value
   }
 
-  if (type === 'uint256') {
-    // FundNavFeed `nav` (syncNavValue) is a USD denomination at 1e18 scale —
-    // NOT a token amount in the sibling `asset`. Format it as a denomination.
-    if (paramName === 'nav') {
-      try {
-        return formatDenomination(value, 6)
-      } catch {
-        return value
-      }
-    }
-
-    // `to` address is the token contract (e.g. ERC-20 transfer/approve).
-    const meta = assetMetadata?.[to.toLowerCase()]
-
-    if (meta) {
-      try {
-        const bn = BigInt(value)
-        const divisor = 10n ** BigInt(meta.decimals)
-        const whole = bn / divisor
-        const frac = bn % divisor
-        if (frac === 0n) return `${whole.toLocaleString()} ${meta.symbol}`
-        const fracStr = frac.toString().padStart(meta.decimals, '0').replace(/0+$/, '').slice(0, 4)
-        return `${whole.toLocaleString()}.${fracStr} ${meta.symbol}`
-      } catch {
-        return value
-      }
-    }
-  }
-
-  if (type === 'address[]') {
+  if (param.name === 'nav' && /^-?\d+$/.test(param.value)) {
     try {
-      const addrs = JSON.parse(value) as string[]
+      return formatDenomination(param.value, 6)
+    } catch {
+      return param.value
+    }
+  }
+
+  if (isAmountParamName(param.name)) {
+    return formatDisplayAmount(param.value)
+  }
+
+  if (param.type === 'address[]') {
+    try {
+      const addrs = JSON.parse(param.value) as string[]
       if (Array.isArray(addrs)) {
         return addrs
           .map((a) => `${a.slice(0, 6)}…${a.slice(-4)}`)
@@ -197,5 +185,5 @@ function formatParamValue(value: string, paramName: string, type: string, to: st
     } catch { /* not JSON */ }
   }
 
-  return value
+  return param.value
 }

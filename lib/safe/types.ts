@@ -67,6 +67,14 @@ export type DataDecoded = {
   protocolName?: string
   contractName?: string
   actionLabel?: string
+  /** Harmonix `tokens[]` — used to scale amount params in the detail view. */
+  tokens?: DecodedToken[]
+}
+
+export type DecodedToken = {
+  address: string
+  symbol?: string
+  decimals?: number
 }
 
 export type MultiSendInnerCall = {
